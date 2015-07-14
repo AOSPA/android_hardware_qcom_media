@@ -129,6 +129,7 @@ handle_err:
 
 omx_venc::omx_venc()
 {
+    DEBUG_PRINT_HIGH("omx_venc: constructor");
 #ifdef _ANDROID_ICS_
     meta_mode_enable = false;
     memset(meta_buffer_hdr,0,sizeof(meta_buffer_hdr));
@@ -156,13 +157,20 @@ omx_venc::omx_venc()
     lowlatency = atoi(property_value);
     property_value[0] = '\0';
     m_perf_control.send_hint_to_mpctl(true);
+    DEBUG_PRINT_HIGH("omx_venc: constructor completed");
 }
 
 omx_venc::~omx_venc()
 {
+    DEBUG_PRINT_HIGH("omx_venc: destructor");
     get_syntaxhdr_enable = false;
     m_perf_control.send_hint_to_mpctl(false);
-    //nothing to do
+    if (handle) {
+        DEBUG_PRINT_HIGH("venc_close() in destructor");
+        handle->venc_close();
+        delete (handle);
+    }
+    DEBUG_PRINT_HIGH("omx_venc: destructor completed");
 }
 
 /* ======================================================================
