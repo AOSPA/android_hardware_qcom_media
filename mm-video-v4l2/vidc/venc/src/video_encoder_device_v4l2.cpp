@@ -203,6 +203,7 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     async_thread_force_stop = false;
     color_format = 0;
     hw_overload = false;
+    extradata = false;
     mBatchSize = 0;
     deinterlace_enabled = false;
     m_roi_enabled = false;
@@ -223,11 +224,15 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     memset(&bitrate, 0, sizeof(bitrate));
     memset(&intra_period, 0, sizeof(intra_period));
     memset(&codec_profile, 0, sizeof(codec_profile));
+    memset(&profile_level, 0, sizeof(profile_level));
     memset(&set_param, 0, sizeof(set_param));
     memset(&time_inc, 0, sizeof(time_inc));
     memset(&m_sInput_buff_property, 0, sizeof(m_sInput_buff_property));
     memset(&m_sOutput_buff_property, 0, sizeof(m_sOutput_buff_property));
     memset(&session_qp, 0, sizeof(session_qp));
+    memset(&init_qp, 0, sizeof(init_qp));
+    memset(&session_qp_range, 0, sizeof(session_qp_range));
+    memset(&session_qp_values, 0, sizeof(session_qp_values));
     memset(&session_ipb_qp_values, 0, sizeof(session_ipb_qp_values));
     memset(&entropy, 0, sizeof(entropy));
     memset(&dbkfilter, 0, sizeof(dbkfilter));
@@ -242,6 +247,11 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     supported_rc_modes = RC_ALL;
     memset(&vqzip_sei_info, 0, sizeof(vqzip_sei_info));
     memset(&ltrinfo, 0, sizeof(ltrinfo));
+    memset(&performance_level, 0, sizeof(performance_level));
+    memset(&vui_timing_info, 0, sizeof(vui_timing_info));
+    memset(&peak_bitrate, 0, sizeof(peak_bitrate));
+    memset(&vpx_err_resilience, 0, sizeof(vpx_err_resilience));
+    memset(&low_latency, 0, sizeof(low_latency));
     memset(&fd_list, 0, sizeof(fd_list));
     memset(&hybrid_hp, 0, sizeof(hybrid_hp));
     sess_priority.priority = 1;
