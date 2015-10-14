@@ -5914,6 +5914,14 @@ bool venc_dev::venc_set_intra_refresh(OMX_VIDEO_INTRAREFRESHTYPE ir_mode, OMX_U3
     bool status = true;
     int rc;
     struct v4l2_control control_mode,control_mbs;
+
+    if (!strncmp(m_platform, "msm8956", 7) &&
+            (m_sVenc_cfg.codectype == V4L2_PIX_FMT_MPEG4)) {
+        /* intra refresh mode is not supported on msm8956 hw */
+        DEBUG_PRINT_ERROR("intra refresh mode is not supported");
+        return false;
+    }
+
     control_mode.id = V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_MODE;
     control_mbs.id = V4L2_CID_MPEG_VIDC_VIDEO_CIR_MBS;
     control_mbs.value = 0;
