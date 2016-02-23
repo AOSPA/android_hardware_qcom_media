@@ -4835,7 +4835,38 @@ OMX_ERRORTYPE omx_video::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVE
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u",
                         (unsigned int)profileLevelType->nProfileIndex);
                 eRet = OMX_ErrorNoMore;
+           }
+#else
+            char property_value[PROPERTY_VALUE_MAX] = {0};
+            OMX_VIDEO_AVCLEVELTYPE level = OMX_VIDEO_AVCLevel4;
+            if (property_get("media.msm8956hw", property_value, "0") && atoi(property_value)) {
+                level = OMX_VIDEO_AVCLevel51;
             }
+
+            if (profileLevelType->nProfileIndex == 0) {
+                profileLevelType->eProfile = OMX_VIDEO_AVCProfileBaseline;
+                profileLevelType->eLevel   = level;
+
+            } else if (profileLevelType->nProfileIndex == 1) {
+                profileLevelType->eProfile = OMX_VIDEO_AVCProfileMain;
+                profileLevelType->eLevel   = level;
+            } else if (profileLevelType->nProfileIndex == 2) {
+                profileLevelType->eProfile = OMX_VIDEO_AVCProfileHigh;
+                profileLevelType->eLevel   = level;
+#ifdef _MSM8226_
+            } else if (profileLevelType->nProfileIndex == 3) {
+                profileLevelType->eProfile = OMX_VIDEO_AVCProfileConstrainedBaseline;
+                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel4;
+            } else if (profileLevelType->nProfileIndex == 4) {
+                profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedBaseline;
+                profileLevelType->eLevel   = level;
+#endif
+            } else {
+                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %d",
+                        (int)profileLevelType->nProfileIndex);
+                eRet = OMX_ErrorNoMore;
+            }
+#endif
         } else if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingH263) {
             if (profileLevelType->nProfileIndex == 0) {
                 profileLevelType->eProfile = OMX_VIDEO_H263ProfileBaseline;
