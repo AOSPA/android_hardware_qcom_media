@@ -54,7 +54,9 @@ libmm-venc-def += -D_NV21_
 endif
 
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_SUPPORT_VQZIP)),true)
+ifeq ($(VENDOR_HEAD_IS_PRESENT),true)
 libmm-venc-def += -D_VQZIP_
+endif
 endif
 
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_SUPPORT_PQ)),true)
