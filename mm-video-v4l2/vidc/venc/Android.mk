@@ -42,6 +42,9 @@ libmm-venc-def += -D_UBWC_
 ifneq ($(QCPATH),)
 libmm-venc-def += -D_VQZIP_
 endif
+ifeq ($(VENDOR_HEAD_IS_PRESENT),true)
+libmm-venc-def += -D_VQZIP_
+endif
 endif
 
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_USE_FLAG_MSM8226)),true)
