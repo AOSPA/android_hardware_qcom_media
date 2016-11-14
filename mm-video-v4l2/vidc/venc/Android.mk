@@ -51,7 +51,7 @@ endif
 endif
 
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_SUPPORT_PQ)),true)
-ifneq ($(QCPATH),)
+ifeq ($(VENDOR_HEAD_IS_PRESENT),true)
 libmm-venc-def += -D_PQ_
 endif
 endif
