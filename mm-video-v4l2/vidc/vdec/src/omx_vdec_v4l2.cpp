@@ -3383,21 +3383,17 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
 
     if (profileLevelType->nPortIndex == 0) {
         if (!strncmp(drv_ctx.kind, "OMX.qcom.video.decoder.avc",OMX_MAX_STRINGNAME_SIZE)) {
+            profileLevelType->eLevel = OMX_VIDEO_AVCLevel52;
             if (profileLevelType->nProfileIndex == 0) {
                 profileLevelType->eProfile = OMX_VIDEO_AVCProfileBaseline;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel51;
             } else if (profileLevelType->nProfileIndex == 1) {
                 profileLevelType->eProfile = OMX_VIDEO_AVCProfileMain;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
             } else if (profileLevelType->nProfileIndex == 2) {
                 profileLevelType->eProfile = OMX_VIDEO_AVCProfileHigh;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
             } else if (profileLevelType->nProfileIndex == 3) {
                 profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedBaseline;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
             } else if (profileLevelType->nProfileIndex == 4) {
                 profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedHigh;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
             } else {
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u",
                         (unsigned int)profileLevelType->nProfileIndex);
@@ -3819,6 +3815,7 @@ OMX_ERRORTYPE  omx_vdec::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                         break;
                     case V4L2_MPEG_VIDEO_H264_LEVEL_5_1:
                         pParam->eLevel = OMX_VIDEO_AVCLevel51;
+                        break;
                     case V4L2_MPEG_VIDEO_H264_LEVEL_5_2:
                         pParam->eLevel = OMX_VIDEO_AVCLevel52;
                         break;
@@ -5912,6 +5909,12 @@ OMX_ERRORTYPE  omx_vdec::use_input_heap_buffers(
 {
     DEBUG_PRINT_LOW("Inside %s, %p", __FUNCTION__, buffer);
     OMX_ERRORTYPE eRet = OMX_ErrorNone;
+
+    if (secure_mode) {
+        DEBUG_PRINT_ERROR("use_input_heap_buffers is not allowed in secure mode");
+        return OMX_ErrorUndefined;
+    }
+
     if (!m_inp_heap_ptr)
         m_inp_heap_ptr = (OMX_BUFFERHEADERTYPE*)
             calloc( (sizeof(OMX_BUFFERHEADERTYPE)),
@@ -7182,7 +7185,7 @@ OMX_ERRORTYPE  omx_vdec::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
     /*for use buffer we need to memcpy the data*/
     temp_buffer->buffer_len = buffer->nFilledLen;
 
-    if (input_use_buffer && temp_buffer->bufferaddr) {
+    if (input_use_buffer && temp_buffer->bufferaddr && !secure_mode) {
         if (buffer->nFilledLen <= temp_buffer->buffer_len) {
             if (arbitrary_bytes) {
                 memcpy (temp_buffer->bufferaddr, (buffer->pBuffer + buffer->nOffset),buffer->nFilledLen);
@@ -8158,47 +8161,6 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
         }
     }
 
-    if (!output_flush_progress && (buffer->nFilledLen > 0)) {
-        // set the default colorspace advised by client, since the bitstream may be
-        // devoid of colorspace-info.
-        if (m_enable_android_native_buffers) {
-            ColorSpace_t color_space = ITU_R_601;
-
-        // Disabled ?
-        // WA for VP8. Vp8 encoder does not embed color-info (yet!).
-        // Encoding RGBA results in 601-LR for all resolutions.
-        // This conflicts with the client't defaults which are based on resolution.
-        //   Eg: 720p will be encoded as 601-LR. Client will say 709.
-        // Re-enable this code once vp8 encoder generates color-info and hence the
-        // decoder will be able to override with the correct source color.
-#if 0
-            switch (m_client_color_space.sAspects.mPrimaries) {
-                case ColorAspects::PrimariesBT601_6_625:
-                case ColorAspects::PrimariesBT601_6_525:
-                {
-                    color_space = m_client_color_space.sAspects.mRange == ColorAspects::RangeFull ?
-                            ITU_R_601_FR : ITU_R_601;
-                    break;
-                }
-                case ColorAspects::PrimariesBT709_5:
-                {
-                    color_space = ITU_R_709;
-                    break;
-                }
-                default:
-                {
-                    break;
-                }
-            }
-#endif
-            DEBUG_PRINT_LOW("setMetaData for Color Space (client) = 0x%x (601=%u FR=%u 709=%u)",
-                    color_space, ITU_R_601, ITU_R_601_FR, ITU_R_709);
-            set_colorspace_in_handle(color_space, buffer - m_out_mem_ptr);
-        }
-        DEBUG_PRINT_LOW("Processing extradata");
-        handle_extradata(buffer);
-    }
-
 #ifdef OUTPUT_EXTRADATA_LOG
     if (outputExtradataFile) {
         int buf_index = buffer - m_out_mem_ptr;
@@ -8679,6 +8641,45 @@ int omx_vdec::async_message_process (void *context, void* message)
                    }
 
                    if (vdec_msg->msgdata.output_frame.len) {
+                       if (!omx->output_flush_progress && (omxhdr->nFilledLen > 0)) {
+                           // set the default colorspace advised by client, since the bitstream may be
+                           // devoid of colorspace-info.
+                           if (omx->m_enable_android_native_buffers) {
+                               ColorSpace_t color_space = ITU_R_601;
+
+                           // Disabled ?
+                           // WA for VP8. Vp8 encoder does not embed color-info (yet!).
+                           // Encoding RGBA results in 601-LR for all resolutions.
+                           // This conflicts with the client't defaults which are based on resolution.
+                           //   Eg: 720p will be encoded as 601-LR. Client will say 709.
+                           // Re-enable this code once vp8 encoder generates color-info and hence the
+                           // decoder will be able to override with the correct source color.
+#if 0
+                               switch (omx->m_client_color_space.sAspects.mPrimaries) {
+                                   case ColorAspects::PrimariesBT601_6_625:
+                                   case ColorAspects::PrimariesBT601_6_525:
+                                   {
+                                       color_space = omx->m_client_color_space.sAspects.mRange == ColorAspects::RangeFull ?
+                                               ITU_R_601_FR : ITU_R_601;
+                                       break;
+                                   }
+                                   case ColorAspects::PrimariesBT709_5:
+                                   {
+                                       color_space = ITU_R_709;
+                                       break;
+                                   }
+                                   default:
+                                   {
+                                       break;
+                                   }
+                               }
+#endif
+                               DEBUG_PRINT_LOW("setMetaData for Color Space (client) = 0x%x (601=%u FR=%u 709=%u)",
+                                       color_space, ITU_R_601, ITU_R_601_FR, ITU_R_709);
+                               omx->set_colorspace_in_handle(color_space, omxhdr - omx->m_out_mem_ptr);
+                           }
+                       }
+
                        DEBUG_PRINT_LOW("Processing extradata");
                        omx->handle_extradata(omxhdr);
 
@@ -8709,7 +8710,9 @@ int omx_vdec::async_message_process (void *context, void* message)
                                &vdec_msg->msgdata.output_frame.framesize,
                                sizeof(struct vdec_framesize));
 
-                   DEBUG_PRINT_LOW("[RespBufDone] Buf(%p) Ts(%lld) PicType(%u) Flags (0x%x) FillLen(%u) Crop: L(%u) T(%u) R(%u) B(%u)",
+                   DEBUG_PRINT_LOW("[RespBufDone] Fd(%d) Buf(%p) Ts(%lld) PicType(%u) Flags (0x%x)"
+                           " FillLen(%u) Crop: L(%u) T(%u) R(%u) B(%u)",
+                           omx->drv_ctx.ptr_outputbuffer[v4l2_buf_ptr->index].pmem_fd,
                            omxhdr, (long long)vdec_msg->msgdata.output_frame.time_stamp,
                            vdec_msg->msgdata.output_frame.pic_type, v4l2_buf_ptr->flags,
                            (unsigned int)vdec_msg->msgdata.output_frame.len,
@@ -8985,6 +8988,7 @@ OMX_ERRORTYPE omx_vdec::push_input_sc_codec(OMX_HANDLETYPE hComp)
         if (psource_frame->nFlags & OMX_BUFFERFLAG_EOS) {
             if (pdest_frame) {
                 pdest_frame->nFlags |= psource_frame->nFlags;
+                pdest_frame->nTimeStamp = psource_frame->nTimeStamp;
                 DEBUG_PRINT_LOW("Frame Found start Decoding Size =%u TimeStamp = %lld",
                         (unsigned int)pdest_frame->nFilledLen,pdest_frame->nTimeStamp);
                 DEBUG_PRINT_LOW("Found a frame size = %u number = %d",
