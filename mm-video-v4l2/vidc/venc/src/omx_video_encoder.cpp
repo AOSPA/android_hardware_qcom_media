@@ -41,7 +41,6 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define strlcpy g_strlcpy
 #endif
 
-extern int m_pipe;
 static int bframes;
 static int entropy;
 static int lowlatency;
@@ -288,18 +287,9 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
 
     OMX_INIT_STRUCT(&m_sSessionQuantization, OMX_VIDEO_PARAM_QUANTIZATIONTYPE);
     m_sSessionQuantization.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
-    m_sSessionQuantization.nQpI = 9;
-    m_sSessionQuantization.nQpP = 6;
-    m_sSessionQuantization.nQpB = 2;
 
-    OMX_INIT_STRUCT(&m_sSessionQPRange, OMX_QCOM_VIDEO_PARAM_QPRANGETYPE);
+    OMX_INIT_STRUCT(&m_sSessionQPRange, OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE);
     m_sSessionQPRange.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
-    m_sSessionQPRange.minQP = 2;
-    if (codec_type == OMX_VIDEO_CodingAVC) {
-        m_sSessionQPRange.maxQP = 51;
-    } else {
-        m_sSessionQPRange.maxQP = 31;
-    }
 
     OMX_INIT_STRUCT(&m_sAVCSliceFMO, OMX_VIDEO_PARAM_AVCSLICEFMO);
     m_sAVCSliceFMO.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
@@ -503,32 +493,24 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sExtraData = 0;
 
     if (eRet == OMX_ErrorNone) {
-        if (pipe(fds)) {
-            DEBUG_PRINT_ERROR("ERROR: pipe creation failed");
-            eRet = OMX_ErrorInsufficientResources;
-        } else {
-            if (fds[0] == 0 || fds[1] == 0) {
-                if (pipe(fds)) {
-                    DEBUG_PRINT_ERROR("ERROR: pipe creation failed");
-                    eRet = OMX_ErrorInsufficientResources;
-                }
-            }
-            if (eRet == OMX_ErrorNone) {
-                m_pipe_in = fds[0];
-                m_pipe_out = fds[1];
-            }
-        }
         msg_thread_created = true;
         r = pthread_create(&msg_thread_id,0, message_thread_enc, this);
         if (r < 0) {
+            DEBUG_PRINT_ERROR("ERROR: message_thread_enc thread creation failed");
             eRet = OMX_ErrorInsufficientResources;
             msg_thread_created = false;
+            goto init_error;
         } else {
             async_thread_created = true;
             r = pthread_create(&async_thread_id,0, venc_dev::async_venc_message_thread, this);
             if (r < 0) {
+                DEBUG_PRINT_ERROR("ERROR: venc_dev::async_venc_message_thread thread creation failed");
                 eRet = OMX_ErrorInsufficientResources;
                 async_thread_created = false;
+                msg_thread_stop = true;
+                pthread_join(msg_thread_id,NULL);
+                msg_thread_created = false;
+                goto init_error;
             } else
                 dev_set_message_thread_id(async_thread_id);
         }
@@ -536,15 +518,22 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
 
     if (lowlatency)
     {
-        QOMX_ENABLETYPE low_latency;
-        low_latency.bEnable = OMX_TRUE;
+        QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE low_latency;
+        low_latency.bEnableLowLatencyMode = OMX_TRUE;
         DEBUG_PRINT_LOW("Enable lowlatency mode");
         if (!handle->venc_set_param(&low_latency,
-               (OMX_INDEXTYPE)OMX_QcomIndexConfigVideoVencLowLatencyMode)) {
+               (OMX_INDEXTYPE)OMX_QTIIndexParamLowLatencyMode)) {
             DEBUG_PRINT_ERROR("Failed enabling low latency mode");
         }
     }
     DEBUG_PRINT_INFO("Component_init : %s : return = 0x%x", m_nkind, eRet);
+
+    {
+        VendorExtensionStore *extStore = const_cast<VendorExtensionStore *>(&mVendorExtensionStore);
+        init_vendor_extensions(*extStore);
+        mVendorExtensionStore.dumpExtensions((const char *)m_nkind);
+    }
+
     return eRet;
 init_error:
     handle->venc_close();
@@ -1040,32 +1029,53 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     m_sSessionQuantization.nQpI = session_qp->nQpI;
                     m_sSessionQuantization.nQpP = session_qp->nQpP;
                     m_sSessionQuantization.nQpB = session_qp->nQpB;
+                    m_QPSet = ENABLE_I_QP | ENABLE_P_QP | ENABLE_B_QP;
                 } else {
                     DEBUG_PRINT_ERROR("ERROR: Unsupported port Index for Session QP setting");
                     eRet = OMX_ErrorBadPortIndex;
                 }
                 break;
             }
-
-        case OMX_QcomIndexParamVideoQPRange:
+        case OMX_QcomIndexParamVideoIPBQPRange:
             {
-                VALIDATE_OMX_PARAM_DATA(paramData, OMX_QCOM_VIDEO_PARAM_QPRANGETYPE);
-                DEBUG_PRINT_LOW("set_parameter: OMX_QcomIndexParamVideoQPRange");
-                OMX_QCOM_VIDEO_PARAM_QPRANGETYPE *qp_range = (OMX_QCOM_VIDEO_PARAM_QPRANGETYPE*) paramData;
-                if (qp_range->nPortIndex == PORT_INDEX_OUT) {
-                    if (handle->venc_set_param(paramData,
-                                (OMX_INDEXTYPE)OMX_QcomIndexParamVideoQPRange) != true) {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE);
+                DEBUG_PRINT_LOW("set_parameter: OMX_QcomIndexParamVideoIPBQPRange");
+                OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE *session_qp_range = (OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE*) paramData;
+                if (session_qp_range->nPortIndex == PORT_INDEX_OUT) {
+                    if (handle->venc_set_param(paramData, (OMX_INDEXTYPE)OMX_QcomIndexParamVideoIPBQPRange) != true) {
                         return OMX_ErrorUnsupportedSetting;
                     }
-                    m_sSessionQPRange.minQP= qp_range->minQP;
-                    m_sSessionQPRange.maxQP= qp_range->maxQP;
+                    m_sSessionQPRange.minIQP = session_qp_range->minIQP;
+                    m_sSessionQPRange.maxIQP = session_qp_range->maxIQP;
+                    m_sSessionQPRange.minPQP = session_qp_range->minPQP;
+                    m_sSessionQPRange.maxPQP = session_qp_range->maxPQP;
+                    m_sSessionQPRange.minBQP = session_qp_range->minBQP;
+                    m_sSessionQPRange.maxBQP = session_qp_range->maxBQP;
                 } else {
                     DEBUG_PRINT_ERROR("ERROR: Unsupported port Index for QP range setting");
                     eRet = OMX_ErrorBadPortIndex;
                 }
                 break;
             }
-
+        case QOMX_IndexParamVideoInitialQp:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_EXTNINDEX_VIDEO_INITIALQP);
+                DEBUG_PRINT_LOW("set_parameter: QOMX_IndexParamVideoInitialQp");
+                QOMX_EXTNINDEX_VIDEO_INITIALQP *initial_qp = (QOMX_EXTNINDEX_VIDEO_INITIALQP*) paramData;
+                if (initial_qp->nPortIndex == PORT_INDEX_OUT) {
+                    if (handle->venc_set_param(paramData, (OMX_INDEXTYPE)QOMX_IndexParamVideoInitialQp) != true) {
+                        return OMX_ErrorUnsupportedSetting;
+                    }
+                    m_sSessionQuantization.nQpI = initial_qp->nQpI;
+                    m_sSessionQuantization.nQpP = initial_qp->nQpP;
+                    m_sSessionQuantization.nQpB = initial_qp->nQpB;
+                    m_QPSet = initial_qp->bEnableInitQp;
+                } else {
+                    DEBUG_PRINT_ERROR("ERROR: Unsupported port Index for initial QP setting");
+                    eRet = OMX_ErrorBadPortIndex;
+                }
+                break;
+            }
         case OMX_QcomIndexPortDefn:
             {
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_QCOM_PARAM_PORTDEFINITIONTYPE);
@@ -1461,15 +1471,6 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     return OMX_ErrorUnsupportedSetting;
                 }
                 memcpy(&m_sSar, paramData, sizeof(m_sSar));
-                break;
-            }
-        case OMX_QcomIndexConfigVideoVencLowLatencyMode:
-            {
-                if(!handle->venc_set_param(paramData,
-                            (OMX_INDEXTYPE)OMX_QcomIndexConfigVideoVencLowLatencyMode)) {
-                    DEBUG_PRINT_ERROR("Request to Enable Low latency mode failed");
-                    return OMX_ErrorUnsupportedSetting;
-                }
                 break;
             }
         case OMX_QTIIndexParamVideoEnableRoiInfo:
@@ -1969,6 +1970,17 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                 DEBUG_PRINT_ERROR("Setting/modifying Temporal layers at run-time is not supported !");
                 return OMX_ErrorUnsupportedSetting;
             }
+        case OMX_IndexConfigAndroidVendorExtension:
+            {
+                VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE);
+
+                OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext =
+                    reinterpret_cast<OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *>(configData);
+                VALIDATE_OMX_VENDOR_EXTENSION_PARAM_DATA(ext);
+
+                return set_vendor_extension_config(ext);
+            }
+
         default:
             DEBUG_PRINT_ERROR("ERROR: unsupported index %d", (int) configIndex);
             break;
@@ -2080,6 +2092,11 @@ OMX_U32 omx_venc::dev_start(void)
     return handle->venc_start();
 }
 
+OMX_U32 omx_venc::dev_flush(unsigned port)
+{
+    return handle->venc_flush(port);
+}
+
 OMX_U32 omx_venc::dev_resume(void)
 {
     return handle->venc_resume();
@@ -2095,9 +2112,9 @@ OMX_U32 omx_venc::dev_set_message_thread_id(pthread_t tid)
     return handle->venc_set_message_thread_id(tid);
 }
 
-bool omx_venc::dev_use_buf(void *buf_addr,unsigned port,unsigned index)
+bool omx_venc::dev_use_buf(unsigned port)
 {
-    return handle->venc_use_buf(buf_addr,port,index);
+    return handle->allocate_extradata(port);
 }
 
 bool omx_venc::dev_buffer_ready_to_queue(OMX_BUFFERHEADERTYPE *buffer)

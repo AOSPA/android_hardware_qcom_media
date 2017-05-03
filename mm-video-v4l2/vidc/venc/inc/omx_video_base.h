@@ -66,6 +66,8 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <dlfcn.h>
 #include "C2DColorConverter.h"
 #include "vidc_debug.h"
+#include <vector>
+#include "vidc_vendor_extensions.h"
 
 #ifdef _ANDROID_
 using namespace android;
@@ -198,14 +200,6 @@ struct venc_bufferpayload{
 	unsigned long	filled_len;
 };
 
-struct venc_profile{
-	unsigned long	profile;
-};
-
-struct ven_profilelevel{
-	unsigned long	level;
-};
-
 struct	venc_voptimingcfg{
 	unsigned long	voptime_resolution;
 };
@@ -282,7 +276,7 @@ class omx_video: public qc_omx_component
         virtual ~omx_video();  // destructor
 
         // virtual int async_message_process (void *context, void* message);
-        void process_event_cb(void *ctxt,unsigned char id);
+        void process_event_cb(void *ctxt);
 
         OMX_ERRORTYPE allocate_buffer(
                 OMX_HANDLETYPE hComp,
@@ -300,10 +294,11 @@ class omx_video: public qc_omx_component
         virtual OMX_U32 dev_stop(void) = 0;
         virtual OMX_U32 dev_pause(void) = 0;
         virtual OMX_U32 dev_start(void) = 0;
+        virtual OMX_U32 dev_flush(unsigned) = 0;
         virtual OMX_U32 dev_resume(void) = 0;
         virtual OMX_U32 dev_start_done(void) = 0;
         virtual OMX_U32 dev_set_message_thread_id(pthread_t) = 0;
-        virtual bool dev_use_buf(void *,unsigned,unsigned) = 0;
+        virtual bool dev_use_buf(unsigned) = 0;
         virtual bool dev_free_buf(void *,unsigned) = 0;
         virtual bool dev_empty_buf(void *, void *,unsigned,unsigned) = 0;
         virtual bool dev_fill_buf(void *buffer, void *,unsigned,unsigned) = 0;
@@ -427,11 +422,7 @@ class omx_video: public qc_omx_component
                 OMX_PTR              appData,
                 void *               eglImage);
 
-
-
-        int  m_pipe_in;
-        int  m_pipe_out;
-
+        Signal signal;
         pthread_t msg_thread_id;
         pthread_t async_thread_id;
         bool async_thread_created;
@@ -590,8 +581,7 @@ class omx_video: public qc_omx_component
         OMX_ERRORTYPE push_input_buffer(OMX_HANDLETYPE hComp);
         OMX_ERRORTYPE convert_queue_buffer(OMX_HANDLETYPE hComp,
                 struct pmem &Input_pmem_info,unsigned long &index);
-        OMX_ERRORTYPE queue_meta_buffer(OMX_HANDLETYPE hComp,
-                struct pmem &Input_pmem_info);
+        OMX_ERRORTYPE queue_meta_buffer(OMX_HANDLETYPE hComp);
         OMX_ERRORTYPE push_empty_eos_buffer(OMX_HANDLETYPE hComp,
                 OMX_BUFFERHEADERTYPE *buffer);
         OMX_ERRORTYPE fill_this_buffer_proxy(OMX_HANDLETYPE hComp,
@@ -641,6 +631,15 @@ class omx_video: public qc_omx_component
         bool is_conv_needed(int, int);
         void print_debug_color_aspects(ColorAspects *aspects, const char *prefix);
 
+        OMX_ERRORTYPE get_vendor_extension_config(
+                OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext);
+        OMX_ERRORTYPE set_vendor_extension_config(
+                OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext);
+        void init_vendor_extensions(VendorExtensionStore&);
+        // Extensions-store is immutable after initialization (i.e cannot add/remove/change
+        //  extensions once added !)
+        const VendorExtensionStore mVendorExtensionStore;
+
 #ifdef USE_ION
         int alloc_map_ion_memory(int size,
                                  struct ion_allocation_data *alloc_data,
@@ -688,8 +687,9 @@ class omx_video: public qc_omx_component
         OMX_PARAM_BUFFERSUPPLIERTYPE m_sOutBufSupplier;
         OMX_CONFIG_ROTATIONTYPE m_sConfigFrameRotation;
         OMX_CONFIG_INTRAREFRESHVOPTYPE m_sConfigIntraRefreshVOP;
+        OMX_U32 m_QPSet;
         OMX_VIDEO_PARAM_QUANTIZATIONTYPE m_sSessionQuantization;
-        OMX_QCOM_VIDEO_PARAM_QPRANGETYPE m_sSessionQPRange;
+        OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE m_sSessionQPRange;
         OMX_VIDEO_PARAM_AVCSLICEFMO m_sAVCSliceFMO;
         QOMX_VIDEO_INTRAPERIODTYPE m_sIntraperiod;
         OMX_VIDEO_PARAM_ERRORCORRECTIONTYPE m_sErrorCorrection;
@@ -705,7 +705,7 @@ class omx_video: public qc_omx_component
         QOMX_EXTNINDEX_VIDEO_HIER_P_LAYERS m_sHPlayers;
         OMX_SKYPE_VIDEO_CONFIG_BASELAYERPID m_sBaseLayerID;
         OMX_SKYPE_VIDEO_PARAM_DRIVERVER m_sDriverVer;
-        OMX_SKYPE_VIDEO_CONFIG_QP m_sConfigQP;
+        OMX_QCOM_VIDEO_CONFIG_QP m_sConfigQP;
         QOMX_EXTNINDEX_VIDEO_VENC_SAR m_sSar;
         QOMX_VIDEO_H264ENTROPYCODINGTYPE m_sParamEntropy;
         PrependSPSPPSToIDRFramesParams m_sPrependSPSPPS;
@@ -752,6 +752,7 @@ class omx_video: public qc_omx_component
         uint64_t m_flags;
         uint64_t m_etb_count;
         uint64_t m_fbd_count;
+        OMX_TICKS m_etb_timestamp;
 #ifdef _ANDROID_
         // Heap pointer to frame buffers
         sp<MemoryHeapBase>    m_heap_ptr;

@@ -48,12 +48,16 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <linux/videodev2.h>
 #include <media/msm_vidc.h>
 #include <poll.h>
+#include <list>
 
 #define TIMEOUT 5*60*1000
 #define BIT(num) (1 << (num))
 #define MAX_HYB_HIERP_LAYERS 6
 #define MAX_AVC_HP_LAYERS (4)
 #define MAX_V4L2_BUFS 64 //VB2_MAX_FRAME
+#define ENABLE_I_QP 0x1
+#define ENABLE_P_QP 0x2
+#define ENABLE_B_QP 0x4
 
 enum hier_type {
     HIER_NONE = 0x0,
@@ -98,18 +102,7 @@ struct msm_venc_sessionqp {
     unsigned long    iframeqp;
     unsigned long    pframeqp;
     unsigned long    bframeqp;
-};
-
-struct msm_venc_initqp {
-    unsigned long    iframeqp;
-    unsigned long    pframeqp;
-    unsigned long    bframeqp;
-    unsigned long    enableinitqp;
-};
-
-struct msm_venc_qprange {
-    unsigned long    maxqp;
-    unsigned long    minqp;
+    unsigned long    enableqp;
 };
 
 struct msm_venc_ipb_qprange {
@@ -154,6 +147,7 @@ struct msm_venc_dbcfg {
 
 struct msm_venc_intrarefresh {
     unsigned long    irmode;
+    unsigned long    mbcount;
 };
 
 struct msm_venc_multiclicecfg {
@@ -317,6 +311,7 @@ class venc_dev
         unsigned venc_stop(void);
         unsigned venc_pause(void);
         unsigned venc_start(void);
+        unsigned venc_flush(unsigned);
 #ifdef _ANDROID_ICS_
         bool venc_set_meta_mode(bool);
 #endif
@@ -324,7 +319,7 @@ class venc_dev
         unsigned venc_start_done(void);
         unsigned venc_stop_done(void);
         unsigned venc_set_message_thread_id(pthread_t);
-        bool venc_use_buf(void*, unsigned,unsigned);
+        bool allocate_extradata(unsigned);
         bool venc_free_buf(void*, unsigned);
         bool venc_empty_buf(void *, void *,unsigned,unsigned);
         bool venc_fill_buf(void *, void *,unsigned,unsigned);
@@ -430,8 +425,6 @@ class venc_dev
         struct venc_debug_cap m_debug;
         OMX_U32 m_nDriver_fd;
         int m_poll_efd;
-        bool m_profile_set;
-        bool m_level_set;
         int num_input_planes, num_output_planes;
         int etb, ebd, ftb, fbd;
         struct recon_buffer {
@@ -481,9 +474,6 @@ class venc_dev
         struct msm_venc_allocatorproperty   m_sInput_buff_property;
         struct msm_venc_allocatorproperty   m_sOutput_buff_property;
         struct msm_venc_sessionqp           session_qp;
-        struct msm_venc_initqp              init_qp;
-        struct msm_venc_qprange             session_qp_range;
-        struct msm_venc_qprange             session_qp_values;
         struct msm_venc_ipb_qprange         session_ipb_qp_values;
         struct msm_venc_multiclicecfg       multislice;
         struct msm_venc_entropycfg          entropy;
@@ -502,25 +492,24 @@ class venc_dev
         struct msm_venc_vpx_error_resilience vpx_err_resilience;
         struct msm_venc_priority            sess_priority;
         OMX_U32                             operating_rate;
-        int rc_off_level;
         struct msm_venc_hybrid_hp           hybrid_hp;
         struct msm_venc_color_space         color_space;
         msm_venc_temporal_layers            temporal_layers_config;
 
-        bool venc_set_profile_level(OMX_U32 eProfile,OMX_U32 eLevel);
+        bool venc_set_profile(OMX_U32 eProfile);
+        bool venc_set_level(OMX_U32 eLevel);
         bool venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames);
-        bool venc_set_target_bitrate(OMX_U32 nTargetBitrate, OMX_U32 config);
+        bool venc_set_target_bitrate(OMX_U32 nTargetBitrate);
         bool venc_set_ratectrl_cfg(OMX_VIDEO_CONTROLRATETYPE eControlRate);
-        bool venc_set_session_qp(OMX_U32 i_frame_qp, OMX_U32 p_frame_qp,OMX_U32 b_frame_qp);
-        bool venc_set_session_qp_range(OMX_U32 min_qp, OMX_U32 max_qp);
-        bool venc_set_encode_framerate(OMX_U32 encode_framerate, OMX_U32 config);
+        bool venc_set_session_qp_range(OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE *qp_range);
+        bool venc_set_encode_framerate(OMX_U32 encode_framerate);
         bool venc_set_intra_vop_refresh(OMX_BOOL intra_vop_refresh);
         bool venc_set_color_format(OMX_COLOR_FORMATTYPE color_format);
         bool venc_validate_profile_level(OMX_U32 *eProfile, OMX_U32 *eLevel);
         bool venc_set_multislice_cfg(OMX_INDEXTYPE codec, OMX_U32 slicesize);
         bool venc_set_entropy_config(OMX_BOOL enable, OMX_U32 i_cabac_level);
         bool venc_set_inloop_filter(OMX_VIDEO_AVCLOOPFILTERTYPE loop_filter);
-        bool venc_set_intra_refresh (OMX_VIDEO_INTRAREFRESHTYPE intrarefresh);
+        bool venc_set_intra_refresh (OMX_VIDEO_INTRAREFRESHTYPE intrarefresh, OMX_U32 irMBs);
         bool venc_set_error_resilience(OMX_VIDEO_PARAM_ERRORCORRECTIONTYPE* error_resilience);
         bool venc_set_voptiming_cfg(OMX_U32 nTimeIncRes);
         void venc_config_print();
@@ -548,7 +537,7 @@ class venc_dev
         bool venc_validate_hybridhp_params(OMX_U32 layers, OMX_U32 bFrames, OMX_U32 count, int mode);
         bool venc_set_hierp_layers(OMX_U32 hierp_layers);
         bool venc_set_baselayerid(OMX_U32 baseid);
-        bool venc_set_qp(OMX_U32 nQp);
+        bool venc_set_qp(OMX_U32 i_frame_qp, OMX_U32 p_frame_qp,OMX_U32 b_frame_qp, OMX_U32 enable);
         bool venc_set_aspectratio(void *nSar);
         bool venc_set_priority(OMX_U32 priority);
         bool venc_set_session_priority(OMX_U32 priority);
@@ -590,11 +579,15 @@ class venc_dev
         int supported_rc_modes;
         bool is_thulium_v1;
         bool camera_mode_enabled;
-        struct {
+        struct roidata {
             bool dirty;
+            OMX_TICKS timestamp;
             OMX_QTI_VIDEO_CONFIG_ROIINFO info;
-        } roi;
-
+        };
+        bool m_roi_enabled;
+        pthread_mutex_t m_roilock;
+        std::list<roidata> m_roilist;
+        void get_roi_for_timestamp(struct roidata &roi, OMX_TICKS timestamp);
         bool venc_empty_batch (OMX_BUFFERHEADERTYPE *buf, unsigned index);
         static const int kMaxBuffersInBatch = 16;
         unsigned int mBatchSize;
