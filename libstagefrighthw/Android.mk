@@ -44,13 +44,16 @@ LOCAL_C_INCLUDES:= \
         frameworks/native/include/media/hardware
 
 LOCAL_SHARED_LIBRARIES :=       \
-        libbinder               \
         libutils                \
         libcutils               \
         libdl                   \
-        libui                   \
 
 LOCAL_MODULE := libstagefrighthw
+
+LOCAL_PROPRIETARY_MODULE := true
+LOCAL_MODULE_OWNER := qti
+LOCAL_MODULE_PATH_32      := $(TARGET_OUT_VENDOR)/lib
+LOCAL_MODULE_PATH_64      := $(TARGET_OUT_VENDOR)/lib64
 
 include $(BUILD_SHARED_LIBRARY)
 

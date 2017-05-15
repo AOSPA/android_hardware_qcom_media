@@ -625,6 +625,9 @@ enum OMX_QCOM_EXTN_INDEXTYPE
 
     /* Suggest how big Iframe sizes should be */
     OMX_QTIIndexParamIframeSizeType = 0x7F000070,
+
+    /* use av-timer ticks as timestamp (used by VT-client) */
+    OMX_QTIIndexParamEnableAVTimerTimestamps = 0x7F000071,
 };
 
 /**
@@ -2051,6 +2054,8 @@ typedef struct QOMX_VIDEO_CLIENT_EXTRADATA {
 
 #if defined(__cplusplus) && defined(USE_CAMERA_METABUFFER_UTILS)
 
+#define CAM_META_BUFFER_EVENT_PERF 0x01
+
 /**
  * Camera1 meta-buffer payload create/access/modify utility
  */
@@ -2063,6 +2068,7 @@ struct MetaBufferUtil {
         INT_TIMESTAMP   = 4,
         INT_COLORFORMAT = 5,
         INT_BUFINDEX    = 6,
+        INT_BUFEVENT    = 7,
         INT_TOTAL       = INT_BUFINDEX,
     };
 

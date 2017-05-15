@@ -25,7 +25,7 @@ libmm-vdec-def += -DPROCESS_EXTRADATA_IN_OUTPUT_PORT
 
 TARGETS_THAT_HAVE_VENUS_HEVC := apq8084 msm8994 msm8996
 TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8953 msm8998 sdm660 sdm845
-TARGETS_THAT_NEED_SW_VDEC := msm8937
+TARGETS_THAT_NEED_SW_VDEC := msm8937 sdm845
 
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_HAVE_VENUS_HEVC)),true)
 libmm-vdec-def += -DVENUS_HEVC
@@ -51,8 +51,6 @@ ifeq ($(call is-board-platform-in-list, $(MASTER_SIDE_CP_TARGET_LIST)),true)
 libmm-vdec-def += -DMASTER_SIDE_CP
 endif
 
-libmm-vdec-def += -D_QUERY_DISP_RES_
-
 include $(CLEAR_VARS)
 
 # Common Includes
@@ -64,7 +62,6 @@ libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/adreno
 libmm-vdec-inc          += $(TOP)/frameworks/native/include/media/openmax
 libmm-vdec-inc          += $(TOP)/frameworks/native/include/media/hardware
 libmm-vdec-inc      	+= $(TOP)/hardware/qcom/media/libc2dcolorconvert
-libmm-vdec-inc      	+= $(TOP)/frameworks/av/include/media/stagefright
 libmm-vdec-inc      	+= $(TARGET_OUT_HEADERS)/mm-video/SwVdec
 libmm-vdec-inc      	+= $(TARGET_OUT_HEADERS)/mm-video/swvdec
 libmm-vdec-inc      	+= $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
@@ -99,12 +96,16 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE                    := libOmxVdec
 LOCAL_MODULE_TAGS               := optional
-LOCAL_CFLAGS                    := $(libmm-vdec-def) -Werror -Wno-switch
+LOCAL_PROPRIETARY_MODULE        := true
+LOCAL_MODULE_OWNER              := qti
+LOCAL_MODULE_PATH_32            := $(TARGET_OUT_VENDOR)/lib
+LOCAL_MODULE_PATH_64            := $(TARGET_OUT_VENDOR)/lib64
+LOCAL_CFLAGS                    := $(libmm-vdec-def) -Werror
 LOCAL_C_INCLUDES                += $(libmm-vdec-inc)
 LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-vdec-add-dep)
 
 LOCAL_PRELINK_MODULE    := false
-LOCAL_SHARED_LIBRARIES  := liblog libutils libbinder libcutils libdl libqdutils
+LOCAL_SHARED_LIBRARIES  := liblog libcutils libdl
 
 LOCAL_SHARED_LIBRARIES  += libqdMetaData
 
@@ -126,6 +127,10 @@ ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_NEED_SW_VDEC)),true)
 
 LOCAL_MODULE                  := libOmxSwVdec
 LOCAL_MODULE_TAGS             := optional
+LOCAL_PROPRIETARY_MODULE      := true
+LOCAL_MODULE_OWNER            := qti
+LOCAL_MODULE_PATH_32          := $(TARGET_OUT_VENDOR)/lib
+LOCAL_MODULE_PATH_64          := $(TARGET_OUT_VENDOR)/lib64
 LOCAL_CFLAGS                  := $(libmm-vdec-def)
 LOCAL_C_INCLUDES              += $(libmm-vdec-inc)
 LOCAL_ADDITIONAL_DEPENDENCIES := $(libmm-vdec-add-dep)

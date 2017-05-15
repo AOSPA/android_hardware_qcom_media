@@ -21,7 +21,7 @@ libmm-venc-def += -Werror
 libmm-venc-def += -D_ANDROID_ICS_
 
 TARGETS_THAT_USE_FLAG_MSM8226 := msm8226 msm8916 msm8909
-TARGETS_THAT_NEED_SW_VENC_MPEG4 := msm8909 msm8937
+TARGETS_THAT_NEED_SW_VENC_MPEG4 := msm8909 msm8937 sdm845
 TARGETS_THAT_NEED_SW_VENC_HEVC := msm8992
 TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8998 sdm845
 TARGETS_THAT_SUPPORT_VQZIP := msm8996 msm8998
@@ -59,10 +59,6 @@ ifeq ($(call is-board-platform-in-list, $(MASTER_SIDE_CP_TARGET_LIST)),true)
 libmm-venc-def += -DMASTER_SIDE_CP
 endif
 
-ifeq ($(TARGET_USES_MEDIA_EXTENSIONS),true)
-libmm-venc-def += -DSUPPORT_CONFIG_INTRA_REFRESH
-endif
-
 libmm-venc-def += -DUSE_CAMERA_METABUFFER_UTILS
 
 # Common Includes
@@ -77,7 +73,6 @@ libmm-venc-inc      += frameworks/native/include/media/openmax
 libmm-venc-inc      += hardware/qcom/media/libc2dcolorconvert
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/libvqzip
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/libgpustats
-libmm-venc-inc      += frameworks/av/include/media/stagefright
 libmm-venc-inc      += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
 
 # Common Dependencies
@@ -91,13 +86,17 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE                    := libOmxVenc
 LOCAL_MODULE_TAGS               := optional
+LOCAL_PROPRIETARY_MODULE        := true
+LOCAL_MODULE_OWNER              := qti
+LOCAL_MODULE_PATH_32            := $(TARGET_OUT_VENDOR)/lib
+LOCAL_MODULE_PATH_64            := $(TARGET_OUT_VENDOR)/lib64
 LOCAL_CFLAGS                    := $(libmm-venc-def)
 LOCAL_C_INCLUDES                := $(libmm-venc-inc)
 LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-venc-add-dep)
 
 LOCAL_PRELINK_MODULE      := false
-LOCAL_SHARED_LIBRARIES    := liblog libutils libbinder libcutils \
-                             libdl libgui
+LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl
+
 ifeq ($(BOARD_USES_ADRENO), true)
 LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
 endif # ($(BOARD_USES_ADRENO), true)
@@ -122,13 +121,16 @@ libmm-venc-inc      += $(TARGET_OUT_HEADERS)/mm-video/swvenc
 LOCAL_MODULE                    := libOmxSwVencMpeg4
 
 LOCAL_MODULE_TAGS               := optional
+LOCAL_PROPRIETARY_MODULE        := true
+LOCAL_MODULE_OWNER              := qti
+LOCAL_MODULE_PATH_32            := $(TARGET_OUT_VENDOR)/lib
+LOCAL_MODULE_PATH_64            := $(TARGET_OUT_VENDOR)/lib64
 LOCAL_CFLAGS                    := $(libmm-venc-def)
 LOCAL_C_INCLUDES                := $(libmm-venc-inc)
 LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-venc-add-dep)
 
 LOCAL_PRELINK_MODULE      := false
-LOCAL_SHARED_LIBRARIES    := liblog libutils libbinder libcutils \
-                             libdl libgui
+LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl
 LOCAL_SHARED_LIBRARIES    += libMpeg4SwEncoder
 ifeq ($(BOARD_USES_ADRENO), true)
 LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
