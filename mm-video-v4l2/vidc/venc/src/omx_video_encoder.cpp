@@ -634,13 +634,6 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FormatAndroidOpaque) {
                         m_sInPortDef.format.video.eColorFormat = (OMX_COLOR_FORMATTYPE)
                             QOMX_DEFAULT_COLOR_FMT;
-                        if (!mUseProxyColorFormat) {
-                            if (!c2d_conv.init()) {
-                                DEBUG_PRINT_ERROR("C2D init failed");
-                                return OMX_ErrorUnsupportedSetting;
-                            }
-                            DEBUG_PRINT_HIGH("C2D init is successful");
-                        }
                         mUseProxyColorFormat = true;
                         m_input_msg_id = OMX_COMPONENT_GENERATE_ETB_OPQ;
                     } else
@@ -723,13 +716,6 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FormatAndroidOpaque) {
                         m_sInPortFormat.eColorFormat = (OMX_COLOR_FORMATTYPE)
                             QOMX_DEFAULT_COLOR_FMT;
-                        if (!mUseProxyColorFormat) {
-                            if (!c2d_conv.init()) {
-                                DEBUG_PRINT_ERROR("C2D init failed");
-                                return OMX_ErrorUnsupportedSetting;
-                            }
-                            DEBUG_PRINT_HIGH("C2D init is successful");
-                        }
                         mUseProxyColorFormat = true;
                         m_input_msg_id = OMX_COMPONENT_GENERATE_ETB_OPQ;
                     } else
@@ -1725,7 +1711,6 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                 VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_ROTATIONTYPE);
                 OMX_CONFIG_ROTATIONTYPE *pParam =
                     reinterpret_cast<OMX_CONFIG_ROTATIONTYPE*>(configData);
-                OMX_S32 nRotation;
 
                 if (pParam->nPortIndex != PORT_INDEX_OUT) {
                     DEBUG_PRINT_ERROR("ERROR: Unsupported port index: %u", (unsigned int)pParam->nPortIndex);
@@ -1740,11 +1725,10 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                     DEBUG_PRINT_ERROR("ERROR: un supported Rotation %u", (unsigned int)pParam->nRotation);
                     return OMX_ErrorUnsupportedSetting;
                 }
-                nRotation = pParam->nRotation - m_sConfigFrameRotation.nRotation;
-                if (nRotation < 0)
-                    nRotation = -nRotation;
-
-                DEBUG_PRINT_HIGH("set_config: updating device Dims");
+                if (m_sConfigFrameRotation.nRotation == pParam->nRotation) {
+                    DEBUG_PRINT_HIGH("set_config: rotation (%d) not changed", pParam->nRotation);
+                    break;
+                }
 
                 if (handle->venc_set_config(configData,
                     OMX_IndexConfigCommonRotate) != true) {
