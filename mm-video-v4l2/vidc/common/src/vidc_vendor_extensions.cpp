@@ -51,7 +51,7 @@ OMX_ERRORTYPE VendorExtension::copyInfoTo(
         OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext) const {
 
     // Extension info
-    strncpy((char *)ext->cName, mName.c_str(), OMX_MAX_STRINGNAME_SIZE);
+    strlcpy((char *)ext->cName, mName.c_str(), OMX_MAX_STRINGNAME_SIZE);
     ext->eDir = mPortDir;
     ext->nParamCount = paramCount();
 
@@ -63,7 +63,7 @@ OMX_ERRORTYPE VendorExtension::copyInfoTo(
 
     int i = 0;
     for (const Param& p : mParams) {
-        strncpy((char *)ext->nParam[i].cKey, p.name(), OMX_MAX_STRINGNAME_SIZE);
+        strlcpy((char *)ext->nParam[i].cKey, p.name(), OMX_MAX_STRINGNAME_SIZE);
         ext->nParam[i].bSet = mIsSet ? OMX_TRUE : OMX_FALSE;
         ext->nParam[i].eValueType = p.type();
         ++i;
@@ -84,7 +84,7 @@ bool VendorExtension::setParamInt32(
 
 bool VendorExtension::setParamInt64(
         OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext, const char *paramKey,
-        OMX_S32 setInt64) const {
+        OMX_S64 setInt64) const {
     int paramIndex = indexOfParam(paramKey);
     if (!_isParamAccessTypeOK(ext, paramIndex, OMX_AndroidVendorValueInt64)) {
         return false;
@@ -100,7 +100,7 @@ bool VendorExtension::setParamString(
     if (!_isParamAccessTypeOK(ext, paramIndex, OMX_AndroidVendorValueString)) {
         return false;
     }
-    strncpy((char *)ext->nParam[paramIndex].cString, setStr, OMX_MAX_STRINGVALUE_SIZE);
+    strlcpy((char *)ext->nParam[paramIndex].cString, setStr, OMX_MAX_STRINGVALUE_SIZE);
     return true;
 }
 
@@ -120,7 +120,7 @@ bool VendorExtension::readParamInt32(
 
 bool VendorExtension::readParamInt64(
         OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext, const char *paramKey,
-        OMX_S32 *readInt64) const {
+        OMX_S64 *readInt64) const {
     int paramIndex = indexOfParam(paramKey);
     if (!_isParamAccessTypeOK(ext, paramIndex, OMX_AndroidVendorValueInt64)) {
         return false;
@@ -132,7 +132,7 @@ bool VendorExtension::readParamInt64(
     return false;
 }
 
-bool VendorExtension::readParamInt64(
+bool VendorExtension::readParamString(
             OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext, const char *paramKey,
             char *readStr) const {
     int paramIndex = indexOfParam(paramKey);
@@ -140,7 +140,7 @@ bool VendorExtension::readParamInt64(
         return false;
     }
     if (ext->nParam[paramIndex].bSet == OMX_TRUE) {
-        strncpy(readStr,
+        strlcpy(readStr,
                 (const char *)ext->nParam[paramIndex].cString, OMX_MAX_STRINGVALUE_SIZE);
         return true;
     }

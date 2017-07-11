@@ -1575,6 +1575,22 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
 
                 break;
             }
+        case OMX_IndexParamVideoMpeg4:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_MPEG4TYPE);
+                OMX_VIDEO_PARAM_MPEG4TYPE* pParam = (OMX_VIDEO_PARAM_MPEG4TYPE*)paramData;
+                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoMpeg4");
+                memcpy(pParam, &m_sParamMPEG4, sizeof(m_sParamMPEG4));
+                break;
+            }
+        case OMX_IndexParamVideoH263:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_H263TYPE);
+                OMX_VIDEO_PARAM_H263TYPE* pParam = (OMX_VIDEO_PARAM_H263TYPE*)paramData;
+                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoH263");
+                memcpy(pParam, &m_sParamH263, sizeof(m_sParamH263));
+                break;
+            }
         case OMX_IndexParamVideoAvc:
             {
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_AVCTYPE);
@@ -1988,6 +2004,14 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 memcpy(pLayerInfo, &m_sParamTemporalLayers, sizeof(m_sParamTemporalLayers));
                 break;
             }
+        case OMX_QcomIndexParamVideoDownScalar:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_INDEXDOWNSCALAR);
+                QOMX_INDEXDOWNSCALAR *pDownScalarParam =
+                    reinterpret_cast<QOMX_INDEXDOWNSCALAR *>(paramData);
+                memcpy(pDownScalarParam, &m_sParamDownScalar, sizeof(m_sParamDownScalar));
+                break;
+            }
         case OMX_IndexParamVideoSliceFMO:
         default:
             {
@@ -2107,7 +2131,7 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
            }
        case OMX_QcomIndexConfigQp:
            {
-                VALIDATE_OMX_PARAM_DATA(configData, OMX_SKYPE_VIDEO_CONFIG_QP);
+               VALIDATE_OMX_PARAM_DATA(configData, OMX_SKYPE_VIDEO_CONFIG_QP);
                OMX_SKYPE_VIDEO_CONFIG_QP* pParam =
                    reinterpret_cast<OMX_SKYPE_VIDEO_CONFIG_QP*>(configData);
                DEBUG_PRINT_LOW("get_config: OMX_QcomIndexConfigQp");

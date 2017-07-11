@@ -514,6 +514,10 @@ struct extradata_info {
 
 typedef std::unordered_map <int, int> ColorSubMapping;
 typedef std::unordered_map <int, ColorSubMapping> DecColorMapping;
+typedef std::unordered_map <enum ColorAspects::Primaries, ColorPrimaries> PrimariesMap;
+typedef std::unordered_map <enum ColorAspects::Transfer, GammaTransfer> TransferMap;
+typedef std::unordered_map <enum ColorAspects::MatrixCoeffs, MatrixCoEfficients> MatrixCoeffMap;
+typedef std::unordered_map <enum ColorAspects::Range, ColorRange> RangeMap;
 
 // OMX video decoder class
 class omx_vdec: public qc_omx_component
@@ -809,13 +813,6 @@ class omx_vdec: public qc_omx_component
         void free_input_buffer_header();
         void free_output_extradata_buffer_header();
 
-        OMX_ERRORTYPE allocate_input_heap_buffer(OMX_HANDLETYPE       hComp,
-                OMX_BUFFERHEADERTYPE **bufferHdr,
-                OMX_U32              port,
-                OMX_PTR              appData,
-                OMX_U32              bytes);
-
-
         OMX_ERRORTYPE allocate_input_buffer(OMX_HANDLETYPE       hComp,
                 OMX_BUFFERHEADERTYPE **bufferHdr,
                 OMX_U32              port,
@@ -866,23 +863,18 @@ class omx_vdec: public qc_omx_component
         OMX_ERRORTYPE start_port_reconfig();
         OMX_ERRORTYPE update_picture_resolution();
         int stream_off(OMX_U32 port);
-        void adjust_timestamp(OMX_S64 &act_timestamp);
         void set_frame_rate(OMX_S64 act_timestamp);
         void handle_extradata_secure(OMX_BUFFERHEADERTYPE *p_buf_hdr);
         void handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr);
         void convert_color_space_info(OMX_U32 primaries, OMX_U32 range,
-            OMX_U32 transfer, OMX_U32 matrix, ColorSpace_t *color_space,
+            OMX_U32 transfer, OMX_U32 matrix,
             ColorAspects *aspects);
-        bool handle_color_space_info(void *data,
-                                     ColorSpace_t *color_space,
-                                     ColorMetaData* color_mdata,
-                                     bool& set_color_aspects_only);
-        void set_colorspace_in_handle(ColorSpace_t color, unsigned int buf_index);
+        bool handle_color_space_info(void *data);
         void print_debug_color_aspects(ColorAspects *aspects, const char *prefix);
         void print_debug_hdr_color_info(HDRStaticInfo *hdr_info, const char *prefix);
         void print_debug_hdr_color_info_mdata(ColorMetaData* color_mdata);
-        bool handle_content_light_level_info(void* data, ContentLightLevel* light_level_mdata);
-        bool handle_mastering_display_color_info(void* data, MasteringDisplay* mastering_display_mdata);
+        bool handle_content_light_level_info(void* data);
+        bool handle_mastering_display_color_info(void* data);
         void print_debug_extradata(OMX_OTHER_EXTRADATATYPE *extra);
         void set_colormetadata_in_handle(ColorMetaData *color_mdata, unsigned int buf_index);
         void prepare_color_aspects_metadata(OMX_U32 primaries, OMX_U32 range,
@@ -1049,8 +1041,6 @@ class omx_vdec: public qc_omx_component
         bool output_use_buffer;
         bool ouput_egl_buffers;
         OMX_BOOL m_use_output_pmem;
-        OMX_BOOL m_out_mem_region_smi;
-        OMX_BOOL m_out_pvt_entry_pmem;
 
         int pending_input_buffers;
         int pending_output_buffers;
@@ -1080,12 +1070,8 @@ class omx_vdec: public qc_omx_component
         // SPS+PPS sent as part of set_config
         OMX_VENDOR_EXTRADATATYPE            m_vendor_config;
 
-        /*Variables for arbitrary Byte parsing support*/
-
         omx_cmd_queue m_input_pending_q;
         omx_cmd_queue m_input_free_q;
-        bool arbitrary_bytes;
-        OMX_BUFFERHEADERTYPE  h264_scratch;
         OMX_BUFFERHEADERTYPE  *psource_frame;
         OMX_BUFFERHEADERTYPE  *pdest_frame;
         OMX_BUFFERHEADERTYPE  *m_inp_heap_ptr;
@@ -1095,15 +1081,12 @@ class omx_vdec: public qc_omx_component
         unsigned frame_count;
         unsigned nal_count;
         unsigned nal_length;
-        bool look_ahead_nal;
         int first_frame;
         unsigned char *first_buffer;
         int first_frame_size;
         unsigned char m_hwdevice_name[80];
         FILE *m_device_file_ptr;
         enum vc1_profile_type m_vc1_profile;
-        OMX_S64 h264_last_au_ts;
-        OMX_U32 h264_last_au_flags;
         OMX_U32 m_demux_offsets[8192];
         OMX_U32 m_demux_entries;
         OMX_U32 m_disp_hor_size;
@@ -1201,9 +1184,7 @@ class omx_vdec: public qc_omx_component
         // HDRStaticInfo defined in HardwareAPI.h
         DescribeHDRStaticInfoParams m_client_hdr_info;
         DescribeHDRStaticInfoParams m_internal_hdr_info;
-        bool m_change_client_hdr_info;
-        pthread_mutex_t m_hdr_info_client_lock;
-        ColorMetaData m_color_mdata;
+
 
         OMX_U32 operating_frame_rate;
 
@@ -1211,7 +1192,6 @@ class omx_vdec: public qc_omx_component
         OMX_U32 m_smoothstreaming_height;
         OMX_ERRORTYPE enable_smoothstreaming();
         OMX_ERRORTYPE enable_adaptive_playback(unsigned long width, unsigned long height);
-        bool is_thulium_v1;
         bool m_disable_ubwc_mode;
         bool m_disable_split_mode;
         bool m_enable_downscalar;
@@ -1382,6 +1362,18 @@ class omx_vdec: public qc_omx_component
 
         // list of extensions is not mutable after initialization
         const VendorExtensionStore mVendorExtensionStore;
+
+        // Map of ColorAspects (VideoAPI.h) to ColorMetaData (color_metadata.h)
+        PrimariesMap mPrimariesMap;
+        TransferMap mTransferMap;
+        MatrixCoeffMap mMatrixCoeffMap;
+        RangeMap mColorRangeMap;
+
+        void init_color_aspects_map();
+        void convert_color_aspects_to_metadata(ColorAspects& aspects, ColorMetaData &color_mdata);
+        void convert_hdr_info_to_metadata(HDRStaticInfo& hdr_info, ColorMetaData &color_mdata);
+        void get_preferred_color_aspects(ColorAspects& preferredColorAspects);
+        void get_preferred_hdr_info(HDRStaticInfo& preferredHDRInfo);
 };
 
 enum instance_state {

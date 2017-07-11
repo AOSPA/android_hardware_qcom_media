@@ -639,6 +639,8 @@ class omx_video: public qc_omx_component
         OMX_VIDEO_PARAM_PORTFORMATTYPE m_sOutPortFormat;
         OMX_PARAM_PORTDEFINITIONTYPE m_sInPortDef;
         OMX_PARAM_PORTDEFINITIONTYPE m_sOutPortDef;
+        OMX_VIDEO_PARAM_MPEG4TYPE m_sParamMPEG4;
+        OMX_VIDEO_PARAM_H263TYPE m_sParamH263;
         OMX_VIDEO_PARAM_AVCTYPE m_sParamAVC;
         OMX_VIDEO_PARAM_VP8TYPE m_sParamVP8;
         OMX_VIDEO_PARAM_HEVCTYPE m_sParamHEVC;
@@ -673,6 +675,7 @@ class omx_video: public qc_omx_component
         OMX_QCOM_VIDEO_CONFIG_QP m_sConfigQP;
         QOMX_EXTNINDEX_VIDEO_VENC_SAR m_sSar;
         QOMX_VIDEO_H264ENTROPYCODINGTYPE m_sParamEntropy;
+        QOMX_INDEXDOWNSCALAR m_sParamDownScalar;
         PrependSPSPPSToIDRFramesParams m_sPrependSPSPPS;
         struct timestamp_info {
             OMX_U64 m_TimeStamp;

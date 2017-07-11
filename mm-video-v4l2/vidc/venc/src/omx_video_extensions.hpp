@@ -47,6 +47,13 @@ void omx_video::init_vendor_extensions(VendorExtensionStore &store) {
 
     ADD_EXTENSION("qti-ext-enc-timestamp-source-avtimer", OMX_QTIIndexParamEnableAVTimerTimestamps, OMX_DirInput)
     ADD_PARAM_END("enable", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-frame-qp", OMX_QcomIndexConfigQp, OMX_DirOutput)
+    ADD_PARAM_END("value", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-down-scalar", OMX_QcomIndexParamVideoDownScalar, OMX_DirOutput)
+    ADD_PARAM    ("output-width", OMX_AndroidVendorValueInt32)
+    ADD_PARAM_END("output-height", OMX_AndroidVendorValueInt32)
 }
 
 OMX_ERRORTYPE omx_video::get_vendor_extension_config(
@@ -98,6 +105,17 @@ OMX_ERRORTYPE omx_video::get_vendor_extension_config(
         case OMX_QTIIndexParamEnableAVTimerTimestamps:
         {
             setStatus &= vExt.setParamInt32(ext, "enable", m_sParamAVTimerTimestampMode.bEnable);
+            break;
+        }
+        case OMX_QcomIndexConfigQp:
+        {
+            setStatus &= vExt.setParamInt32(ext, "value", m_sConfigQP.nQP);
+            break;
+        }
+        case OMX_QcomIndexParamVideoDownScalar:
+        {
+            setStatus &= vExt.setParamInt32(ext, "output-width", m_sParamDownScalar.nOutputWidth);
+            setStatus &= vExt.setParamInt32(ext, "output-height", m_sParamDownScalar.nOutputHeight);
             break;
         }
         default:
@@ -230,6 +248,45 @@ OMX_ERRORTYPE omx_video::set_vendor_extension_config(
                 DEBUG_PRINT_ERROR("set_param: OMX_QTIIndexParamEnableAVTimerTimestamps failed !");
             }
 
+            break;
+        }
+        case OMX_QcomIndexConfigQp:
+        {
+            OMX_QCOM_VIDEO_CONFIG_QP qpConfig;
+            memcpy(&qpConfig, &m_sConfigQP, sizeof(OMX_QCOM_VIDEO_CONFIG_QP));
+            valueSet |= vExt.readParamInt32(ext, "value", (OMX_S32 *)&(qpConfig.nQP));
+            if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: nQP =%u", qpConfig.nQP);
+
+            err = set_config(
+                    NULL, (OMX_INDEXTYPE)OMX_QcomIndexConfigQp, &qpConfig);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_config: OMX_QcomIndexConfigQp failed !");
+            }
+
+            break;
+        }
+        case OMX_QcomIndexParamVideoDownScalar:
+        {
+            QOMX_INDEXDOWNSCALAR downScalarParam;
+            memcpy(&downScalarParam, &m_sParamDownScalar, sizeof(QOMX_INDEXDOWNSCALAR));
+            downScalarParam.bEnable = OMX_TRUE;
+            valueSet |= vExt.readParamInt32(ext, "output-width", (OMX_S32 *)&(downScalarParam.nOutputWidth));
+            valueSet |= vExt.readParamInt32(ext, "output-height", (OMX_S32 *)&(downScalarParam.nOutputHeight));
+            if(!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: Downscalar Enable = %u Output Width = %u Output Height = %u",
+                             downScalarParam.bEnable, downScalarParam.nOutputWidth, downScalarParam.nOutputHeight);
+
+            err = set_parameter(NULL, (OMX_INDEXTYPE)OMX_QcomIndexParamVideoDownScalar, &downScalarParam);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_param: OMX_QcomIndexParamVideoDownScalar failed !");
+            }
             break;
         }
         default:

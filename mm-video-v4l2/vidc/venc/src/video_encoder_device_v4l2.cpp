@@ -49,6 +49,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 #include <qdMetaData.h>
+#include "PlatformConfig.h"
 
 #define ATRACE_TAG ATRACE_TAG_VIDEO
 #include <utils/Trace.h>
@@ -75,14 +76,14 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define Log2(number, power)  { OMX_U32 temp = number; power = 0; while( (0 == (temp & 0x1)) &&  power < 16) { temp >>=0x1; power++; } }
 #define Q16ToFraction(q,num,den) { OMX_U32 power; Log2(q,power);  num = q >> power; den = 0x1 << (16 - power); }
 
-#define BUFFER_LOG_LOC "/data/misc/media"
+#define BUFFER_LOG_LOC "/data/vendor/media"
 
 #define OMX_VIDEO_LEVEL_UNKNOWN 0
 
 #define VENC_BFRAME_MAX_COUNT       1
 #define VENC_BFRAME_MAX_FPS         60
-#define VENC_BFRAME_MAX_HEIGHT      1920
-#define VENC_BFRAME_MAX_WIDTH       1088
+#define VENC_BFRAME_MAX_WIDTH       1920
+#define VENC_BFRAME_MAX_HEIGHT      1088
 
 //constructor
 venc_dev::venc_dev(class omx_venc *venc_class)
@@ -143,12 +144,12 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     memset(&color_space, 0x0, sizeof(color_space));
     memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
 
-    char property_value[PROPERTY_VALUE_MAX] = {0};
-    property_get("vidc.enc.log.in", property_value, "0");
-    m_debug.in_buffer_log = atoi(property_value);
+    Platform::Config::getInt32(Platform::vidc_enc_log_in,
+            (int32_t *)&m_debug.in_buffer_log, 0);
+    Platform::Config::getInt32(Platform::vidc_enc_log_out,
+            (int32_t *)&m_debug.out_buffer_log, 0);
 
-    property_get("vidc.enc.log.out", property_value, "0");
-    m_debug.out_buffer_log = atoi(property_value);
+    char property_value[PROPERTY_VALUE_MAX] = {0};
 
     property_get("vidc.enc.log.extradata", property_value, "0");
     m_debug.extradata_log = atoi(property_value);
@@ -1305,24 +1306,6 @@ bool venc_dev::venc_open(OMX_U32 codec)
         fdesc.index++;
     }
 
-    is_thulium_v1 = false;
-    soc_file= fopen("/sys/devices/soc0/soc_id", "r");
-    if (soc_file) {
-        fread(buffer, 1, 4, soc_file);
-        fclose(soc_file);
-        if (atoi(buffer) == 246) {
-            soc_file = fopen("/sys/devices/soc0/revision", "r");
-            if (soc_file) {
-                fread(buffer, 1, 4, soc_file);
-                fclose(soc_file);
-                if (atoi(buffer) == 1) {
-                    is_thulium_v1 = true;
-                    DEBUG_PRINT_HIGH("is_thulium_v1 = TRUE");
-                }
-            }
-        }
-    }
-
     if (venc_handle->is_secure_session()) {
         m_sOutput_buff_property.alignment = SZ_1M;
         m_sInput_buff_property.alignment  = SZ_1M;
@@ -1842,16 +1825,11 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
 
                     unsigned long codectype = venc_get_codectype(portDefn->format.video.eCompressionFormat);
 
-                    if (m_sVenc_cfg.dvs_height != portDefn->format.video.nFrameHeight ||
-                            m_sVenc_cfg.dvs_width != portDefn->format.video.nFrameWidth ||
+                    //Don't worry about width/height if downscalar is enabled.
+                    if (((m_sVenc_cfg.dvs_height != portDefn->format.video.nFrameHeight ||
+                            m_sVenc_cfg.dvs_width != portDefn->format.video.nFrameWidth) && !downscalar_enabled) ||
                             m_sOutput_buff_property.actualcount != portDefn->nBufferCountActual ||
                             m_sVenc_cfg.codectype != codectype) {
-
-                        DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamPortDefinition: port: %u, WxH %lux%lu --> %ux%u, count %lu --> %u, format %#lx --> %#lx",
-                            portDefn->nPortIndex, m_sVenc_cfg.dvs_width, m_sVenc_cfg.dvs_height,
-                            portDefn->format.video.nFrameWidth, portDefn->format.video.nFrameHeight,
-                            m_sInput_buff_property.actualcount, portDefn->nBufferCountActual,
-                            m_sVenc_cfg.codectype, codectype);
 
                         if (portDefn->nBufferCountActual < m_sOutput_buff_property.mincount) {
                             DEBUG_PRINT_LOW("Actual count %u is less than driver mincount %lu on port %u",
@@ -1859,8 +1837,17 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                             return false;
                         }
 
-                        m_sVenc_cfg.dvs_height = portDefn->format.video.nFrameHeight;
-                        m_sVenc_cfg.dvs_width = portDefn->format.video.nFrameWidth;
+                        //If downscalar is enabled. Correct width/height is populated no need to replace with port def width/height
+                        if (!downscalar_enabled) {
+                            DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamPortDefinition: port: %u, WxH %lux%lu --> %ux%u, count %lu --> %u, format %#lx --> %#lx",
+                                            portDefn->nPortIndex, m_sVenc_cfg.dvs_width, m_sVenc_cfg.dvs_height,
+                                            portDefn->format.video.nFrameWidth, portDefn->format.video.nFrameHeight,
+                                            m_sOutput_buff_property.actualcount, portDefn->nBufferCountActual,
+                                            m_sVenc_cfg.codectype, codectype);
+                            m_sVenc_cfg.dvs_height = portDefn->format.video.nFrameHeight;
+                            m_sVenc_cfg.dvs_width = portDefn->format.video.nFrameWidth;
+                        }
+
                         m_sVenc_cfg.codectype = codectype;
                         m_sOutput_buff_property.actualcount = portDefn->nBufferCountActual;
 
@@ -2493,6 +2480,30 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 DEBUG_PRINT_INFO("AVTimer timestamps enabled");
                 break;
             }
+        case OMX_QcomIndexParamVideoDownScalar:
+            {
+                QOMX_INDEXDOWNSCALAR *pParam = (QOMX_INDEXDOWNSCALAR *)paramData;
+                downscalar_enabled = pParam->bEnable;
+
+                DEBUG_PRINT_INFO("Downscalar settings: Enabled : %d Width : %u Height %u",
+                    pParam->bEnable, pParam->nOutputWidth, pParam->nOutputHeight);
+                if (downscalar_enabled) {
+                    m_sVenc_cfg.dvs_width = pParam->nOutputWidth;
+                    m_sVenc_cfg.dvs_height = pParam->nOutputHeight;
+
+                    memset(&fmt, 0, sizeof(fmt));
+                    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+                    fmt.fmt.pix_mp.width = pParam->nOutputWidth;
+                    fmt.fmt.pix_mp.height = pParam->nOutputHeight;
+                    fmt.fmt.pix_mp.pixelformat = m_sVenc_cfg.codectype;
+                    if (ioctl(m_nDriver_fd, VIDIOC_S_FMT, &fmt)) {
+                        DEBUG_PRINT_ERROR("Failed to set format on capture port");
+                        return false;
+                    }
+                    m_sOutput_buff_property.datasize = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
+                }
+                break;
+            }
         default:
             DEBUG_PRINT_ERROR("ERROR: Unsupported parameter in venc_set_param: %u",
                     index);
@@ -2711,6 +2722,7 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
             {
                 OMX_QCOM_VIDEO_CONFIG_QP* pParam =
                     (OMX_QCOM_VIDEO_CONFIG_QP*) configData;
+                DEBUG_PRINT_LOW("Set_config: nQP %d", pParam->nQP);
                 if (venc_set_qp(pParam->nQP,
                                 pParam->nQP,
                                 pParam->nQP,
@@ -2742,15 +2754,16 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
             }
         case OMX_IndexConfigAndroidIntraRefresh:
             {
-                OMX_VIDEO_CONFIG_ANDROID_INTRAREFRESHTYPE *intra_refresh = (OMX_VIDEO_CONFIG_ANDROID_INTRAREFRESHTYPE *)configData;
-                DEBUG_PRINT_LOW("OMX_IndexConfigAndroidIntraRefresh : num frames = %d", intra_refresh->nRefreshPeriod);
+                OMX_VIDEO_CONFIG_ANDROID_INTRAREFRESHTYPE *intra_refresh_period = (OMX_VIDEO_CONFIG_ANDROID_INTRAREFRESHTYPE *)configData;
+                DEBUG_PRINT_LOW("OMX_IndexConfigAndroidIntraRefresh : num frames = %d", intra_refresh_period->nRefreshPeriod);
 
-                if (intra_refresh->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
+                if (intra_refresh_period->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
+                    intra_refresh.framecount = intra_refresh_period->nRefreshPeriod;
                     OMX_U32 mb_size = 16;
                     OMX_U32 num_mbs_per_frame = (ALIGN(m_sVenc_cfg.dvs_height, mb_size)/mb_size) * (ALIGN(m_sVenc_cfg.dvs_width, mb_size)/mb_size);
                     OMX_U32 num_intra_refresh_mbs = 0;
-                    if (intra_refresh->nRefreshPeriod) {
-                        num_intra_refresh_mbs = ceil(num_mbs_per_frame / intra_refresh->nRefreshPeriod);
+                    if (intra_refresh_period->nRefreshPeriod) {
+                        num_intra_refresh_mbs = ceil(num_mbs_per_frame / intra_refresh_period->nRefreshPeriod);
                     }
 
                     if (venc_set_intra_refresh(OMX_VIDEO_IntraRefreshRandom, num_intra_refresh_mbs) == false) {
@@ -3089,6 +3102,14 @@ unsigned venc_dev::venc_start(void)
 
     if (vqzip_sei_info.enabled && !venc_set_vqzip_defaults())
         return 1;
+
+    // Client can set intra refresh period in terms of frames.
+    // This requires reconfiguration on port redefinition as
+    // mbcount for IR depends on encode resolution.
+    if (!venc_reconfigure_intra_refresh_period()) {
+        DEBUG_PRINT_ERROR("Reconfiguring intra refresh period failed");
+        return 0;
+    }
 
     if (!venc_reconfigure_intra_period()) {
         DEBUG_PRINT_ERROR("Reconfiguring intra period failed");
@@ -3846,6 +3867,24 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
         buf_type=V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
         int ret;
 
+        if (!downscalar_enabled) {
+            OMX_U32 inp_width = 0, inp_height = 0, out_width = 0, out_height = 0;
+
+            if (!venc_get_dimensions(PORT_INDEX_IN, &inp_width, &inp_height)) {
+                return false;
+            }
+
+            if (!venc_get_dimensions(PORT_INDEX_OUT, &out_width, &out_height)) {
+                return false;
+            }
+
+            if (inp_height != out_height || inp_width != out_width) {
+                DEBUG_PRINT_ERROR("Downscalar is disabled and input/output dimenstions don't match");
+                DEBUG_PRINT_ERROR("Input WxH : %dx%d Output WxH : %dx%d",inp_width, inp_height, out_width, out_height);
+                return false;
+            }
+        }
+
         ret = ioctl(m_nDriver_fd, VIDIOC_STREAMON, &buf_type);
 
         if (ret) {
@@ -4009,6 +4048,25 @@ bool venc_dev::venc_empty_batch(OMX_BUFFERHEADERTYPE *bufhdr, unsigned index)
         enum v4l2_buf_type buf_type;
         buf_type=V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
         int ret;
+
+        if (!downscalar_enabled) {
+            OMX_U32 inp_width = 0, inp_height = 0, out_width = 0, out_height = 0;
+
+            if (!venc_get_dimensions(PORT_INDEX_IN, &inp_width, &inp_height)) {
+                return false;
+            }
+
+            if (!venc_get_dimensions(PORT_INDEX_OUT, &out_width, &out_height)) {
+                return false;
+            }
+
+            if (inp_height != out_height || inp_width != out_width) {
+                DEBUG_PRINT_ERROR("Downscalar is disabled and input/output dimenstions don't match");
+                DEBUG_PRINT_ERROR("Input WxH : %dx%d Output WxH : %dx%d",inp_width, inp_height, out_width, out_height);
+                return false;
+            }
+        }
+
         ret = ioctl(m_nDriver_fd, VIDIOC_STREAMON, &buf_type);
         if (ret) {
             DEBUG_PRINT_ERROR("Failed to call streamon");
@@ -4478,8 +4536,7 @@ bool venc_dev::venc_set_profile(OMX_U32 eProfile)
         } else if (eProfile == OMX_VIDEO_AVCProfileHigh) {
             control.value = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH;
         } else {
-            DEBUG_PRINT_LOW("ERROR: Unsupported H.264 profile = %d",
-                    control.value);
+            DEBUG_PRINT_LOW("ERROR: Unsupported H.264 profile = %d", eProfile);
             return false;
         }
     } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
@@ -4493,7 +4550,7 @@ bool venc_dev::venc_set_profile(OMX_U32 eProfile)
             control.value = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10;
         } else {
             DEBUG_PRINT_ERROR("ERROR: Unsupported HEVC profile = %d",
-                    control.value);
+                              eProfile);
             return false;
         }
     } else {
@@ -4703,6 +4760,24 @@ bool venc_dev::venc_set_voptiming_cfg( OMX_U32 TimeIncRes)
     return true;
 }
 
+bool venc_dev::venc_reconfigure_intra_refresh_period() {
+
+    DEBUG_PRINT_LOW("venc_reconfigure_intra_refresh_period");
+    if (intra_refresh.framecount) {
+        OMX_U32 mb_size = 16;
+        // Firmware will re-calculate mbcount if codec is HEVC.
+        OMX_U32 num_mbs_per_frame = (ALIGN(m_sVenc_cfg.dvs_height, mb_size)/mb_size) * (ALIGN(m_sVenc_cfg.dvs_width, mb_size)/mb_size);
+        OMX_U32 num_intra_refresh_mbs = 0;
+        num_intra_refresh_mbs = ceil(num_mbs_per_frame / intra_refresh.framecount);
+
+        if (venc_set_intra_refresh(OMX_VIDEO_IntraRefreshRandom, num_intra_refresh_mbs) == false) {
+            DEBUG_PRINT_ERROR("ERROR: Setting Intra refresh failed");
+            return false;
+        }
+    }
+    return true;
+}
+
 bool venc_dev::venc_reconfigure_intra_period()
 {
     int  rc;
@@ -4717,8 +4792,8 @@ bool venc_dev::venc_reconfigure_intra_period()
 
     DEBUG_PRINT_LOW("venc_reconfigure_intra_period");
 
-    if ((m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_WIDTH && m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_HEIGHT) ||
-        (m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_HEIGHT && m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_WIDTH)) {
+    if ((m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_WIDTH && m_sVenc_cfg.input_height <= VENC_BFRAME_MAX_HEIGHT) ||
+        (m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_HEIGHT && m_sVenc_cfg.input_height <= VENC_BFRAME_MAX_WIDTH)) {
         isValidResolution = true;
     }
 
@@ -4837,7 +4912,7 @@ bool venc_dev::venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
     intra_period.num_pframes = nPFrames;
     intra_period.num_bframes = nBFrames;
 
-    if (!venc_calibrate_gop() && !is_thulium_v1)
+    if (!venc_calibrate_gop())
     {
         DEBUG_PRINT_ERROR("Invalid settings, Hybrid HP enabled with LTR OR Hier-pLayers OR bframes");
         return false;

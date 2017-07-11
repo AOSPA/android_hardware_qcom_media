@@ -148,6 +148,7 @@ struct msm_venc_dbcfg {
 struct msm_venc_intrarefresh {
     unsigned long    irmode;
     unsigned long    mbcount;
+    unsigned long    framecount;
 };
 
 struct msm_venc_multiclicecfg {
@@ -484,6 +485,7 @@ class venc_dev
         OMX_U32                             operating_rate;
         struct msm_venc_color_space         color_space;
         msm_venc_temporal_layers            temporal_layers_config;
+        OMX_BOOL                            downscalar_enabled;
 
         bool venc_query_cap(struct v4l2_queryctrl &cap);
         bool venc_validate_range(OMX_S32 id, OMX_S32 val);
@@ -508,6 +510,7 @@ class venc_dev
         bool venc_set_extradata(OMX_U32 extra_data, OMX_BOOL enable);
         bool venc_set_idr_period(OMX_U32 nPFrames, OMX_U32 nIDRPeriod);
         bool venc_reconfigure_intra_period();
+        bool venc_reconfigure_intra_refresh_period();
         bool venc_reconfig_reqbufs();
         bool venc_set_vpe_rotation(OMX_S32 rotation_angle);
         bool venc_set_ltrmode(OMX_U32 enable, OMX_U32 count);
@@ -569,7 +572,6 @@ class venc_dev
         bool is_searchrange_set;
         bool enable_mv_narrow_searchrange;
         int supported_rc_modes;
-        bool is_thulium_v1;
         bool camera_mode_enabled;
         struct roidata {
             bool dirty;
