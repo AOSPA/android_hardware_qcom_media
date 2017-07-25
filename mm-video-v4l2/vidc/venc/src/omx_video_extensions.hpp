@@ -38,8 +38,11 @@ void omx_video::init_vendor_extensions(VendorExtensionStore &store) {
     ADD_PARAM    ("n-pframes",    OMX_AndroidVendorValueInt32)
     ADD_PARAM_END("n-idr-period", OMX_AndroidVendorValueInt32)
 
-    ADD_EXTENSION("qti-ext-enc-error-correction", OMX_IndexParamVideoErrorCorrection, OMX_DirOutput)
+    ADD_EXTENSION("qti-ext-enc-error-correction", OMX_QcomIndexParamVideoSliceSpacing, OMX_DirOutput)
     ADD_PARAM_END("resync-marker-spacing-bits", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-slice", OMX_QcomIndexParamVideoSliceSpacing, OMX_DirOutput)
+    ADD_PARAM_END("spacing", OMX_AndroidVendorValueInt32)
 
     ADD_EXTENSION("qti-ext-enc-custom-profile-level", OMX_IndexParamVideoProfileLevelCurrent, OMX_DirOutput)
     ADD_PARAM    ("profile", OMX_AndroidVendorValueInt32)
@@ -54,6 +57,30 @@ void omx_video::init_vendor_extensions(VendorExtensionStore &store) {
     ADD_EXTENSION("qti-ext-enc-down-scalar", OMX_QcomIndexParamVideoDownScalar, OMX_DirOutput)
     ADD_PARAM    ("output-width", OMX_AndroidVendorValueInt32)
     ADD_PARAM_END("output-height", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-app-input-control", OMX_QcomIndexParamVencControlInputQueue, OMX_DirInput)
+    ADD_PARAM_END("enable", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-input-trigger", OMX_IndexConfigTimePosition, OMX_DirInput)
+    ADD_PARAM_END("timestamp", OMX_AndroidVendorValueInt64)
+
+    ADD_EXTENSION("qti-ext-enc-low-latency", OMX_QTIIndexParamLowLatencyMode, OMX_DirInput)
+    ADD_PARAM_END("enable", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-base-layer-pid", OMX_QcomIndexConfigBaseLayerId, OMX_DirInput)
+    ADD_PARAM_END("value", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-ltr-count", OMX_QcomIndexParamVideoLTRCount, OMX_DirOutput)
+    ADD_PARAM_END("num-ltr-frames", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-ltr", OMX_QcomIndexConfigVideoLTRUse, OMX_DirInput)
+    ADD_PARAM_END("use-frame", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-ltr", OMX_QcomIndexConfigVideoLTRMark, OMX_DirInput)
+    ADD_PARAM_END("mark-frame", OMX_AndroidVendorValueInt32)
+
+    ADD_EXTENSION("qti-ext-enc-dynamic-frame-rate", OMX_IndexConfigVideoFramerate, OMX_DirOutput)
+    ADD_PARAM_END("frame-rate", OMX_AndroidVendorValueInt32)
 }
 
 OMX_ERRORTYPE omx_video::get_vendor_extension_config(
@@ -88,11 +115,14 @@ OMX_ERRORTYPE omx_video::get_vendor_extension_config(
             setStatus &= vExt.setParamInt32(ext, "n-idr-period", m_sConfigAVCIDRPeriod.nIDRPeriod);
             break;
         }
-        case OMX_IndexParamVideoErrorCorrection:
+        case OMX_QcomIndexParamVideoSliceSpacing:
         {
-            // "bits" @0
-            setStatus &= vExt.setParamInt32(ext,
-                    "resync-marker-spacing-bits", m_sErrorCorrection.nResynchMarkerSpacing);
+            if (vExt.isConfigKey(ext, "qti-ext-enc-error-correction")) {
+                setStatus &= vExt.setParamInt32(ext,
+                        "resync-marker-spacing-bits", m_sSliceSpacing.nSliceSize);
+            } else if (vExt.isConfigKey(ext, "qti-ext-enc-slice")) {
+                setStatus &= vExt.setParamInt32(ext, "spacing", m_sSliceSpacing.nSliceSize);
+            }
             break;
         }
         case OMX_IndexParamVideoProfileLevelCurrent:
@@ -118,6 +148,46 @@ OMX_ERRORTYPE omx_video::get_vendor_extension_config(
             setStatus &= vExt.setParamInt32(ext, "output-height", m_sParamDownScalar.nOutputHeight);
             break;
         }
+        case OMX_QcomIndexParamVencControlInputQueue:
+        {
+            setStatus &= vExt.setParamInt32(ext, "enable", m_sParamControlInputQueue.bEnable);
+            break;
+        }
+        case OMX_IndexConfigTimePosition:
+        {
+            setStatus &= vExt.setParamInt64(ext, "timestamp", m_sConfigInputTrigTS.nTimestamp);
+            break;
+        }
+        case OMX_QTIIndexParamLowLatencyMode:
+        {
+            setStatus &= vExt.setParamInt32(ext, "enable", m_sParamLowLatency.bEnableLowLatencyMode);
+            break;
+        }
+        case OMX_QcomIndexConfigBaseLayerId:
+        {
+            setStatus &= vExt.setParamInt32(ext, "value", m_sBaseLayerID.nPID);
+            break;
+        }
+        case OMX_QcomIndexParamVideoLTRCount:
+        {
+            setStatus &= vExt.setParamInt32(ext, "num-ltr-frames", m_sParamLTRCount.nCount);
+            break;
+        }
+        case OMX_QcomIndexConfigVideoLTRUse:
+        {
+            setStatus &= vExt.setParamInt32(ext, "use-frame", m_sConfigLTRUse.nID);
+            break;
+        }
+        case OMX_QcomIndexConfigVideoLTRMark:
+        {
+            setStatus &= vExt.setParamInt32(ext, "mark-frame", m_sConfigLTRMark.nID);
+            break;
+        }
+        case OMX_IndexConfigVideoFramerate:
+        {
+            setStatus &= vExt.setParamInt32(ext, "frame-rate", m_sConfigFramerate.xEncodeFramerate);
+            break;
+        }
         default:
         {
             return OMX_ErrorNotImplemented;
@@ -129,7 +199,7 @@ OMX_ERRORTYPE omx_video::get_vendor_extension_config(
 OMX_ERRORTYPE omx_video::set_vendor_extension_config(
                 OMX_CONFIG_ANDROID_VENDOR_EXTENSIONTYPE *ext) {
 
-    ALOGI("set_vendor_extension_config");
+    DEBUG_PRINT_LOW("set_vendor_extension_config");
     if (ext->nIndex >= mVendorExtensionStore.size()) {
         DEBUG_PRINT_ERROR("unrecognized vendor extension index (%u) max(%u)",
                 ext->nIndex, mVendorExtensionStore.size());
@@ -190,23 +260,36 @@ OMX_ERRORTYPE omx_video::set_vendor_extension_config(
             }
             break;
         }
-        case OMX_IndexParamVideoErrorCorrection:
+        case OMX_QcomIndexParamVideoSliceSpacing:
         {
-            OMX_VIDEO_PARAM_ERRORCORRECTIONTYPE ecParam;
-            memcpy(&ecParam, &m_sErrorCorrection, sizeof(OMX_VIDEO_PARAM_ERRORCORRECTIONTYPE));
-            valueSet |= vExt.readParamInt32(ext,
-                    "resync-marker-spacing-bits", (OMX_S32 *)&(ecParam.nResynchMarkerSpacing));
+            QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE sliceSpacing;
+            memcpy(&sliceSpacing, &m_sSliceSpacing, sizeof(QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE));
+
+            if (vExt.isConfigKey(ext, "qti-ext-enc-error-correction")) {
+                sliceSpacing.eSliceMode = QOMX_SLICEMODE_BYTE_COUNT;
+                valueSet |= vExt.readParamInt32(ext,
+                    "resync-marker-spacing-bits", (OMX_S32 *)&(sliceSpacing.nSliceSize));
+                sliceSpacing.nSliceSize = ALIGN(sliceSpacing.nSliceSize, 8) >> 3;
+            } else if (vExt.isConfigKey(ext, "qti-ext-enc-slice")) {
+                sliceSpacing.eSliceMode = QOMX_SLICEMODE_MB_COUNT;
+                valueSet |= vExt.readParamInt32(ext,
+                    "spacing", (OMX_S32 *)&(sliceSpacing.nSliceSize));
+            } else {
+              DEBUG_PRINT_ERROR("VENDOR-EXT: set_config: Slice Spacing : Incorrect Mode !");
+              break;
+            }
+
             if (!valueSet) {
                 break;
             }
 
-            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: resync-marker-spacing : %d bits",
-                    ecParam.nResynchMarkerSpacing);
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: slice spacing : mode %d size %d",
+                    sliceSpacing.eSliceMode, sliceSpacing.nSliceSize);
 
             err = set_parameter(
-                    NULL, OMX_IndexParamVideoErrorCorrection, &ecParam);
+                    NULL, (OMX_INDEXTYPE)OMX_QcomIndexParamVideoSliceSpacing, &sliceSpacing);
             if (err != OMX_ErrorNone) {
-                DEBUG_PRINT_ERROR("set_config: OMX_IndexParamVideoErrorCorrection failed !");
+                DEBUG_PRINT_ERROR("set_config: OMX_QcomIndexParamVideoSliceSpacing failed !");
             }
             break;
         }
@@ -287,6 +370,158 @@ OMX_ERRORTYPE omx_video::set_vendor_extension_config(
             if (err != OMX_ErrorNone) {
                 DEBUG_PRINT_ERROR("set_param: OMX_QcomIndexParamVideoDownScalar failed !");
             }
+            break;
+        }
+        case OMX_QcomIndexParamVencControlInputQueue:
+        {
+            QOMX_ENABLETYPE controlInputQueueParam;
+            memcpy(&controlInputQueueParam, &m_sParamControlInputQueue, sizeof(QOMX_ENABLETYPE));
+            valueSet |= vExt.readParamInt32(ext, "enable", (OMX_S32 *)&(controlInputQueueParam.bEnable));
+            if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_param: control input queue enable=%u", controlInputQueueParam.bEnable);
+
+            err = set_parameter(
+                    NULL, (OMX_INDEXTYPE)OMX_QcomIndexParamVencControlInputQueue, &controlInputQueueParam);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_param: OMX_QcomIndexParamVencControlInputQueue failed !");
+            }
+
+            break;
+        }
+        case OMX_IndexConfigTimePosition:
+        {
+            OMX_TIME_CONFIG_TIMESTAMPTYPE triggerTimeStamp;
+            memcpy(&triggerTimeStamp, &m_sConfigInputTrigTS, sizeof(OMX_TIME_CONFIG_TIMESTAMPTYPE));
+            valueSet |= vExt.readParamInt64(ext, "timestamp", (OMX_S64 *)&(triggerTimeStamp.nTimestamp));
+            if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: trigger timestamp =%lld", triggerTimeStamp.nTimestamp);
+
+            err = set_config(
+                    NULL, (OMX_INDEXTYPE)OMX_IndexConfigTimePosition, &triggerTimeStamp);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_config: OMX_IndexConfigTimePosition failed !");
+            }
+
+            break;
+        }
+        case OMX_QTIIndexParamLowLatencyMode:
+        {
+            QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE lowLatency;
+            memcpy(&lowLatency, &m_sParamLowLatency, sizeof(QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE));
+            valueSet |= vExt.readParamInt32(ext, "enable", (OMX_S32 *)&(lowLatency.bEnableLowLatencyMode));
+            if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_param: low latency mode =%u", lowLatency.bEnableLowLatencyMode);
+
+            err = set_parameter(
+                    NULL, (OMX_INDEXTYPE)OMX_QTIIndexParamLowLatencyMode, &lowLatency);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_param: OMX_QTIIndexParamLowLatencyMode failed !");
+            }
+
+            break;
+        }
+        case OMX_QcomIndexConfigBaseLayerId:
+        {
+            OMX_SKYPE_VIDEO_CONFIG_BASELAYERPID baselayerPID;
+            memcpy(&baselayerPID, &m_sBaseLayerID, sizeof(OMX_SKYPE_VIDEO_CONFIG_BASELAYERPID));
+            valueSet |= vExt.readParamInt32(ext, "value", (OMX_S32 *)&(baselayerPID.nPID));
+            if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: base layer pid =%u", baselayerPID.nPID);
+
+            err = set_config(
+                    NULL, (OMX_INDEXTYPE)OMX_QcomIndexConfigBaseLayerId, &baselayerPID);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_config: OMX_QcomIndexConfigBaseLayerId failed !");
+            }
+
+            break;
+        }
+        case OMX_QcomIndexParamVideoLTRCount:
+        {
+           QOMX_VIDEO_PARAM_LTRCOUNT_TYPE ltrCount;
+           memcpy(&ltrCount, &m_sParamLTRCount, sizeof(QOMX_VIDEO_PARAM_LTRCOUNT_TYPE));
+           valueSet |= vExt.readParamInt32(ext, "num-ltr-frames", (OMX_S32 *)&(ltrCount.nCount));
+           if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_parameter: ltr count  =%u", ltrCount.nCount);
+
+            err = set_parameter(
+                    NULL, (OMX_INDEXTYPE)QOMX_IndexParamVideoLTRCount, &ltrCount);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_parameter: OMX_QcomIndexParamVideoLTRCount failed !");
+            }
+
+            break;
+        }
+        case OMX_QcomIndexConfigVideoLTRUse:
+        {
+           QOMX_VIDEO_CONFIG_LTRUSE_TYPE ltrUse;
+           memcpy(&ltrUse, &m_sConfigLTRUse, sizeof(QOMX_VIDEO_CONFIG_LTRUSE_TYPE));
+           valueSet |= vExt.readParamInt32(ext, "use-frame", (OMX_S32 *)&(ltrUse.nID));
+           if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: ltr use  =%u", ltrUse.nID);
+
+            err = set_config(
+                    NULL, (OMX_INDEXTYPE)QOMX_IndexConfigVideoLTRUse, &ltrUse);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_config: OMX_QcomIndexConfigVideoLTRUse failed !");
+            }
+
+            break;
+        }
+        case OMX_QcomIndexConfigVideoLTRMark:
+        {
+           QOMX_VIDEO_CONFIG_LTRMARK_TYPE ltrMark;
+           memcpy(&ltrMark, &m_sConfigLTRMark, sizeof(QOMX_VIDEO_CONFIG_LTRMARK_TYPE));
+           valueSet |= vExt.readParamInt32(ext, "mark-frame", (OMX_S32 *)&(ltrMark.nID));
+           if (!valueSet) {
+                break;
+            }
+
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: ltr mark  =%u", ltrMark.nID);
+
+            err = set_config(
+                    NULL, (OMX_INDEXTYPE)QOMX_IndexConfigVideoLTRMark, &ltrMark);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_config: OMX_QcomIndexConfigVideoLTRMark failed !");
+            }
+
+            break;
+        }
+        case OMX_IndexConfigVideoFramerate:
+        {
+            OMX_CONFIG_FRAMERATETYPE rateParam;
+            memcpy(&rateParam, &m_sConfigFramerate, sizeof(OMX_CONFIG_FRAMERATETYPE));
+            valueSet |= vExt.readParamInt32(ext, "frame-rate", (OMX_S32 *)&rateParam.xEncodeFramerate);
+            if (!valueSet) {
+                break;
+            }
+            DEBUG_PRINT_HIGH("VENDOR-EXT: set_config: OMX_IndexConfigVideoFramerate : %d",
+                    rateParam.xEncodeFramerate);
+
+            err = set_config(
+                    NULL, OMX_IndexConfigVideoFramerate, &rateParam);
+            if (err != OMX_ErrorNone) {
+                DEBUG_PRINT_ERROR("set_config: OMX_IndexConfigVideoFramerate failed !");
+            }
+
             break;
         }
         default:

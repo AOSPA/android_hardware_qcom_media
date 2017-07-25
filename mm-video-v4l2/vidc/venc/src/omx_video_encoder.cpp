@@ -43,7 +43,6 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 static int bframes;
 static int entropy;
-static int lowlatency;
 // factory function executed by the core to create instances
 void *get_omx_component_factory_fn(void)
 {
@@ -64,7 +63,7 @@ omx_venc::omx_venc()
 #endif
     bframes = entropy = 0;
     char property_value[PROPERTY_VALUE_MAX] = {0};
-    property_get("vidc.debug.level", property_value, "1");
+    property_get("vendor.vidc.debug.level", property_value, "1");
     debug_level = strtoul(property_value, NULL, 16);
     property_value[0] = '\0';
     property_get("vidc.debug.bframes", property_value, "0");
@@ -74,9 +73,6 @@ omx_venc::omx_venc()
     entropy = !!atoi(property_value);
     property_value[0] = '\0';
     handle = NULL;
-    property_get("vidc.debug.lowlatency", property_value, "0");
-    lowlatency = atoi(property_value);
-    property_value[0] = '\0';
 }
 
 omx_venc::~omx_venc()
@@ -235,6 +231,10 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sErrorCorrection.bEnableResync = OMX_FALSE;
     m_sErrorCorrection.bEnableRVLC = OMX_FALSE;
     m_sErrorCorrection.nResynchMarkerSpacing = 0;
+
+    OMX_INIT_STRUCT(&m_sSliceSpacing, QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE);
+    m_sSliceSpacing.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
+    m_sSliceSpacing.eSliceMode = QOMX_SLICEMODE_MB_COUNT;
 
     OMX_INIT_STRUCT(&m_sIntraRefresh, OMX_VIDEO_PARAM_INTRAREFRESHTYPE);
     m_sIntraRefresh.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
@@ -395,13 +395,17 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sParamHEVC.eProfile =  OMX_VIDEO_HEVCProfileMain;
     m_sParamHEVC.eLevel =  OMX_VIDEO_HEVCMainTierLevel1;
 
-    OMX_INIT_STRUCT(&m_sParamLTRMode, QOMX_VIDEO_PARAM_LTRMODE_TYPE);
-    m_sParamLTRMode.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
-    m_sParamLTRMode.eLTRMode = QOMX_VIDEO_LTRMode_Disable;
-
     OMX_INIT_STRUCT(&m_sParamLTRCount, QOMX_VIDEO_PARAM_LTRCOUNT_TYPE);
     m_sParamLTRCount.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
     m_sParamLTRCount.nCount = 0;
+
+    OMX_INIT_STRUCT(&m_sConfigLTRUse, QOMX_VIDEO_CONFIG_LTRUSE_TYPE);
+    m_sConfigLTRUse.nPortIndex = (OMX_U32) PORT_INDEX_IN;
+    m_sConfigLTRUse.nID = 0;
+
+    OMX_INIT_STRUCT(&m_sConfigLTRMark, QOMX_VIDEO_CONFIG_LTRMARK_TYPE);
+    m_sConfigLTRMark.nPortIndex = (OMX_U32) PORT_INDEX_IN;
+    m_sConfigLTRMark.nID = 0;
 
     OMX_INIT_STRUCT(&m_sConfigDeinterlace, OMX_VIDEO_CONFIG_DEINTERLACE);
     m_sConfigDeinterlace.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
@@ -423,6 +427,14 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     OMX_INIT_STRUCT(&m_sConfigQP, OMX_QCOM_VIDEO_CONFIG_QP);
     m_sConfigQP.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
     m_sConfigQP.nQP = 30;
+
+    OMX_INIT_STRUCT(&m_sParamControlInputQueue , QOMX_ENABLETYPE);
+    m_sParamControlInputQueue.bEnable = OMX_FALSE;
+
+    OMX_INIT_STRUCT(&m_sConfigInputTrigTS, OMX_TIME_CONFIG_TIMESTAMPTYPE);
+
+    OMX_INIT_STRUCT(&m_sParamLowLatency, QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE);
+    m_sParamLowLatency.nNumFrames = 0;
 
     m_state                   = OMX_StateLoaded;
     m_sExtraData = 0;
@@ -451,16 +463,6 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
         }
     }
 
-    if (lowlatency)
-    {
-        QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE low_latency;
-        low_latency.bEnableLowLatencyMode = OMX_TRUE;
-        DEBUG_PRINT_LOW("Enable lowlatency mode");
-        if (!handle->venc_set_param(&low_latency,
-               (OMX_INDEXTYPE)OMX_QTIIndexParamLowLatencyMode)) {
-            DEBUG_PRINT_ERROR("Failed enabling low latency mode");
-        }
-    }
     DEBUG_PRINT_INFO("Component_init : %s : return = 0x%x", m_nkind, eRet);
 
     {
@@ -1029,6 +1031,19 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 memcpy(&m_sErrorCorrection,pParam, sizeof(m_sErrorCorrection));
                 break;
             }
+        case OMX_QcomIndexParamVideoSliceSpacing:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE);
+                DEBUG_PRINT_LOW("OMX_QcomIndexParamVideoSliceSpacing");
+                QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE* pParam =
+                    (QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE*)paramData;
+                if (!handle->venc_set_param(paramData, (OMX_INDEXTYPE)OMX_QcomIndexParamVideoSliceSpacing)) {
+                    DEBUG_PRINT_ERROR("ERROR: Request for setting slice spacing failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sSliceSpacing, pParam, sizeof(m_sSliceSpacing));
+                break;
+            }
         case OMX_IndexParamVideoIntraRefresh:
             {
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_INTRAREFRESHTYPE);
@@ -1195,18 +1210,6 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             (unsigned int)m_sOutPortDef.nBufferCountMin,
                             (unsigned int)m_sOutPortDef.nBufferSize);
                 }
-                break;
-            }
-        case QOMX_IndexParamVideoLTRMode:
-            {
-                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_VIDEO_PARAM_LTRMODE_TYPE);
-                QOMX_VIDEO_PARAM_LTRMODE_TYPE* pParam =
-                    (QOMX_VIDEO_PARAM_LTRMODE_TYPE*)paramData;
-                if (!handle->venc_set_param(paramData, (OMX_INDEXTYPE)QOMX_IndexParamVideoLTRMode)) {
-                    DEBUG_PRINT_ERROR("ERROR: Setting LTR mode failed");
-                    return OMX_ErrorUnsupportedSetting;
-                }
-                memcpy(&m_sParamLTRMode, pParam, sizeof(m_sParamLTRMode));
                 break;
             }
         case QOMX_IndexParamVideoLTRCount:
@@ -1453,6 +1456,23 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     return OMX_ErrorUnsupportedSetting;
                 }
                 memcpy(&m_sParamDownScalar, paramData, sizeof(QOMX_INDEXDOWNSCALAR));
+                break;
+            }
+        case OMX_QcomIndexParamVencControlInputQueue:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_ENABLETYPE);
+                memcpy(&m_sParamControlInputQueue, paramData, sizeof(QOMX_ENABLETYPE));
+                break;
+            }
+        case OMX_QTIIndexParamLowLatencyMode:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE);
+                if (!handle->venc_set_param(paramData,
+                            (OMX_INDEXTYPE)OMX_QTIIndexParamLowLatencyMode)) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamLowLatencyMode failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sParamLowLatency, paramData, sizeof(QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE));
                 break;
             }
         case OMX_IndexParamVideoSliceFMO:
@@ -1704,18 +1724,6 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                 }
                 break;
             }
-        case QOMX_IndexConfigVideoLTRPeriod:
-            {
-                VALIDATE_OMX_PARAM_DATA(configData, QOMX_VIDEO_CONFIG_LTRPERIOD_TYPE);
-                QOMX_VIDEO_CONFIG_LTRPERIOD_TYPE* pParam = (QOMX_VIDEO_CONFIG_LTRPERIOD_TYPE*)configData;
-                if (!handle->venc_set_config(configData, (OMX_INDEXTYPE)QOMX_IndexConfigVideoLTRPeriod)) {
-                    DEBUG_PRINT_ERROR("ERROR: Setting LTR period failed");
-                    return OMX_ErrorUnsupportedSetting;
-                }
-                memcpy(&m_sConfigLTRPeriod, pParam, sizeof(m_sConfigLTRPeriod));
-                break;
-            }
-
        case OMX_IndexConfigVideoVp8ReferenceFrame:
            {
                 VALIDATE_OMX_PARAM_DATA(configData, OMX_VIDEO_VP8REFERENCEFRAMETYPE);
@@ -1841,16 +1849,21 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
             {
                 OMX_TIME_CONFIG_TIMESTAMPTYPE* pParam =
                     (OMX_TIME_CONFIG_TIMESTAMPTYPE*) configData;
-                pthread_mutex_lock(&timestamp.m_lock);
-                timestamp.m_TimeStamp = (OMX_U64)pParam->nTimestamp;
-                DEBUG_PRINT_LOW("Buffer = %p, Timestamp = %llu", timestamp.pending_buffer, (OMX_U64)pParam->nTimestamp);
-                if (timestamp.is_buffer_pending && (OMX_U64)timestamp.pending_buffer->nTimeStamp == timestamp.m_TimeStamp) {
-                    DEBUG_PRINT_INFO("Queueing back pending buffer %p", timestamp.pending_buffer);
-                    this->post_event((unsigned long)hComp,(unsigned long)timestamp.pending_buffer,m_input_msg_id);
-                    timestamp.pending_buffer = NULL;
-                    timestamp.is_buffer_pending = false;
+                unsigned long buf;
+                unsigned long p2;
+                unsigned long bufTime;
+
+                pthread_mutex_lock(&m_TimeStampInfo.m_lock);
+                m_TimeStampInfo.ts = (OMX_S64)pParam->nTimestamp;
+                while (m_TimeStampInfo.deferred_inbufq.m_size &&
+                       !(m_TimeStampInfo.deferred_inbufq.get_q_msg_type() > m_TimeStampInfo.ts)) {
+                    m_TimeStampInfo.deferred_inbufq.pop_entry(&buf,&p2,&bufTime);
+                    DEBUG_PRINT_INFO("Queueing back pending buffer %lu timestamp %lu", buf, bufTime);
+                    this->post_event((unsigned long)hComp, (unsigned long)buf, m_input_msg_id);
                 }
-                pthread_mutex_unlock(&timestamp.m_lock);
+                pthread_mutex_unlock(&m_TimeStampInfo.m_lock);
+
+                memcpy(&m_sConfigInputTrigTS, pParam, sizeof(m_sConfigInputTrigTS));
                 break;
             }
        case OMX_IndexConfigAndroidIntraRefresh:
@@ -1897,6 +1910,17 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                VALIDATE_OMX_PARAM_DATA(configData, DescribeColorAspectsParams);
                DescribeColorAspectsParams *params = (DescribeColorAspectsParams *)configData;
                print_debug_color_aspects(&(params->sAspects), "set_config");
+
+               // WA: Android client does not set the correct color-aspects (from dataspace).
+               // Such a dataspace change is detected and set while in executing. This leads to
+               // a race condition where client is trying to set (wrong) color and component trying
+               // to set (right) color from ETB.
+               // Hence ignore this config in Executing state till the framework starts setting right color.
+               if (m_state == OMX_StateExecuting) {
+                    DEBUG_PRINT_HIGH("Ignoring ColorSpace setting in Executing state");
+                    return OMX_ErrorUnsupportedSetting;
+               }
+
                if (!handle->venc_set_config(configData, (OMX_INDEXTYPE)OMX_QTIIndexConfigDescribeColorAspects)) {
                    DEBUG_PRINT_ERROR("Failed to set OMX_QTIIndexConfigDescribeColorAspects");
                    return OMX_ErrorUnsupportedSetting;
@@ -2063,20 +2087,22 @@ bool omx_venc::dev_buffer_ready_to_queue(OMX_BUFFERHEADERTYPE *buffer)
     bool bRet = true;
 
     /* do not defer the buffer if m_TimeStamp is not initialized */
-    if (!timestamp.m_TimeStamp)
+    if (!m_sParamControlInputQueue.bEnable)
         return true;
 
-    pthread_mutex_lock(&timestamp.m_lock);
+    pthread_mutex_lock(&m_TimeStampInfo.m_lock);
 
-    if ((OMX_U64)buffer->nTimeStamp == (OMX_U64)timestamp.m_TimeStamp) {
+    if ((!m_sParamControlInputQueue.bEnable) ||
+        (OMX_S64)buffer->nTimeStamp <= (OMX_S64)m_TimeStampInfo.ts) {
         DEBUG_PRINT_LOW("ETB is ready to be queued");
     } else {
-        DEBUG_PRINT_INFO("ETB is defeffed due to timeStamp mismatch");
-        timestamp.is_buffer_pending = true;
-        timestamp.pending_buffer = buffer;
+        DEBUG_PRINT_INFO(
+            "ETB is deferred due to timeStamp mismatch buf_ts %lld m_TimeStampInfo.ts %lld",
+             (OMX_S64)buffer->nTimeStamp, (OMX_S64)m_TimeStampInfo.ts);
+        m_TimeStampInfo.deferred_inbufq.insert_entry((unsigned long)buffer, 0, buffer->nTimeStamp);
         bRet = false;
     }
-    pthread_mutex_unlock(&timestamp.m_lock);
+    pthread_mutex_unlock(&m_TimeStampInfo.m_lock);
     return bRet;
 }
 

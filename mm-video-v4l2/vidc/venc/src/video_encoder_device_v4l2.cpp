@@ -151,7 +151,14 @@ venc_dev::venc_dev(class omx_venc *venc_class)
 
     char property_value[PROPERTY_VALUE_MAX] = {0};
 
-    property_get("vidc.enc.log.extradata", property_value, "0");
+    property_get("vendor.vidc.enc.log.in", property_value, "0");
+    m_debug.in_buffer_log |= atoi(property_value);
+
+    property_value[0] = '\0';
+    property_get("vendor.vidc.enc.log.out", property_value, "0");
+    m_debug.out_buffer_log |= atoi(property_value);
+
+    property_get("vendor.vidc.enc.log.extradata", property_value, "0");
     m_debug.extradata_log = atoi(property_value);
 
 #ifdef _UBWC_
@@ -184,8 +191,10 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     }
 #endif // _PQ_
 
-    snprintf(m_debug.log_loc, PROPERTY_VALUE_MAX,
-             "%s", BUFFER_LOG_LOC);
+     property_value[0] = '\0';
+     property_get("vendor.vidc.log.loc", property_value, BUFFER_LOG_LOC);
+     if (*property_value)
+         strlcpy(m_debug.log_loc, property_value, PROPERTY_VALUE_MAX);
 
     mUseAVTimerTimestamps = false;
 }
@@ -1237,6 +1246,7 @@ bool venc_dev::venc_open(OMX_U32 codec)
     m_sVenc_cfg.inputformat= V4L2_DEFAULT_OUTPUT_COLOR_FMT;
     m_rotation.rotation = 0;
     m_codec = codec;
+    downscalar_enabled = OMX_FALSE;
 
     if (codec == OMX_VIDEO_CodingAVC) {
         m_sVenc_cfg.codectype = V4L2_PIX_FMT_H264;
@@ -1652,7 +1662,7 @@ bool venc_dev::venc_get_buf_req(OMX_U32 *min_buff_count,
             extra_data_size =  fmt.fmt.pix_mp.plane_fmt[extra_idx].sizeimage;
         } else if (extra_idx >= VIDEO_MAX_PLANES) {
             DEBUG_PRINT_ERROR("Extradata index is more than allowed: %d\n", extra_idx);
-            return OMX_ErrorBadParameter;
+            return false;
         }
         input_extradata_info.buffer_size =  ALIGN(extra_data_size, SZ_4K);
         input_extradata_info.count = MAX_V4L2_BUFS;
@@ -1721,7 +1731,7 @@ bool venc_dev::venc_get_buf_req(OMX_U32 *min_buff_count,
             extra_data_size =  fmt.fmt.pix_mp.plane_fmt[extra_idx].sizeimage;
         } else if (extra_idx >= VIDEO_MAX_PLANES) {
             DEBUG_PRINT_ERROR("Extradata index is more than allowed: %d", extra_idx);
-            return OMX_ErrorBadParameter;
+            return false;
         }
 
         output_extradata_info.buffer_size = extra_data_size;
@@ -2067,11 +2077,28 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
 
                 if (error_resilience->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
                     if (venc_set_error_resilience(error_resilience) == false) {
-                        DEBUG_PRINT_ERROR("ERROR: Setting Intra refresh failed");
+                        DEBUG_PRINT_ERROR("ERROR: Setting Error Correction failed");
                         return false;
                     }
                 } else {
                     DEBUG_PRINT_ERROR("ERROR: Invalid Port Index for OMX_IndexParamVideoErrorCorrection");
+                }
+
+                break;
+            }
+         case OMX_QcomIndexParamVideoSliceSpacing:
+            {
+                DEBUG_PRINT_LOW("venc_set_param:OMX_QcomIndexParamVideoSliceSpacing");
+                QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE *slice_spacing =
+                    (QOMX_VIDEO_PARAM_SLICE_SPACING_TYPE*)paramData;
+
+                if (slice_spacing->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
+                    if (!venc_set_multislice_cfg(slice_spacing->eSliceMode, slice_spacing->nSliceSize)) {
+                        DEBUG_PRINT_ERROR("ERROR: Setting Slice Spacing failed");
+                        return false;
+                    }
+                } else {
+                    DEBUG_PRINT_ERROR("ERROR: Invalid Port Index for OMX_QcomIndexParamVideoSliceSpacing");
                 }
 
                 break;
@@ -2709,7 +2736,7 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                     (OMX_SKYPE_VIDEO_CONFIG_BASELAYERPID*) configData;
                 if (venc_set_baselayerid(pParam->nPID) == false) {
                     DEBUG_PRINT_ERROR("Failed to set OMX_QcomIndexConfigBaseLayerId failed");
-                    return OMX_ErrorUnsupportedSetting;
+                    return false;
                 }
                 break;
             }
@@ -2728,7 +2755,7 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                                 pParam->nQP,
                                 ENABLE_I_QP | ENABLE_P_QP | ENABLE_B_QP ) == false) {
                     DEBUG_PRINT_ERROR("Failed to set OMX_QcomIndexConfigQp failed");
-                    return OMX_ErrorUnsupportedSetting;
+                    return false;
                 }
                 break;
             }
@@ -3773,6 +3800,13 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                                 ": filled %d of %d format 0x%lx", fd, plane[0].bytesused, plane[0].length, m_sVenc_cfg.inputformat);
                 }
             } else {
+                // color_format == 1 ==> RGBA to YUV Color-converted buffer
+                // Buffers color-converted via C2D have 601-Limited color
+                if (!streaming[OUTPUT_PORT]) {
+                    DEBUG_PRINT_HIGH("Setting colorspace 601-L for Color-converted buffer");
+                    venc_set_colorspace(MSM_VIDC_BT601_6_625, 0 /*range-limited*/,
+                            MSM_VIDC_TRANSFER_601_6_525, MSM_VIDC_MATRIX_601_6_525);
+                }
                 plane[0].m.userptr = (unsigned long) bufhdr->pBuffer;
                 plane[0].data_offset = bufhdr->nOffset;
                 plane[0].length = bufhdr->nAllocLen;
@@ -3878,7 +3912,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                 return false;
             }
 
-            if (inp_height != out_height || inp_width != out_width) {
+            if (inp_width * inp_height != out_width * out_height) {
                 DEBUG_PRINT_ERROR("Downscalar is disabled and input/output dimenstions don't match");
                 DEBUG_PRINT_ERROR("Input WxH : %dx%d Output WxH : %dx%d",inp_width, inp_height, out_width, out_height);
                 return false;
@@ -3987,7 +4021,7 @@ bool venc_dev::venc_empty_batch(OMX_BUFFERHEADERTYPE *bufhdr, unsigned index)
                 int extradata_index = venc_get_index_from_fd(input_extradata_info.m_ion_dev, fd);
                 if (extradata_index < 0) {
                     DEBUG_PRINT_ERROR("Extradata index calculation went wrong for fd = %d", fd);
-                    return OMX_ErrorBadParameter;
+                    return false;
                 }
 
                 plane[extra_idx].bytesused = 0;
@@ -4060,7 +4094,7 @@ bool venc_dev::venc_empty_batch(OMX_BUFFERHEADERTYPE *bufhdr, unsigned index)
                 return false;
             }
 
-            if (inp_height != out_height || inp_width != out_width) {
+            if (inp_width * inp_height != out_width * out_height) {
                 DEBUG_PRINT_ERROR("Downscalar is disabled and input/output dimenstions don't match");
                 DEBUG_PRINT_ERROR("Input WxH : %dx%d Output WxH : %dx%d",inp_width, inp_height, out_width, out_height);
                 return false;
@@ -4781,6 +4815,7 @@ bool venc_dev::venc_reconfigure_intra_refresh_period() {
 bool venc_dev::venc_reconfigure_intra_period()
 {
     int  rc;
+    bool isValidCodec        = false;
     bool isValidResolution   = false;
     bool isValidFps          = false;
     bool isValidProfileLevel = false;
@@ -4791,6 +4826,11 @@ bool venc_dev::venc_reconfigure_intra_period()
     struct v4l2_control control;
 
     DEBUG_PRINT_LOW("venc_reconfigure_intra_period");
+
+    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 ||
+        m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
+        isValidCodec = true;
+    }
 
     if ((m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_WIDTH && m_sVenc_cfg.input_height <= VENC_BFRAME_MAX_HEIGHT) ||
         (m_sVenc_cfg.input_width <= VENC_BFRAME_MAX_HEIGHT && m_sVenc_cfg.input_height <= VENC_BFRAME_MAX_WIDTH)) {
@@ -4826,12 +4866,13 @@ bool venc_dev::venc_reconfigure_intra_period()
                     isValidProfileLevel &&
                     isValidLayerCount   &&
                     isValidLtrSetting   &&
-                    isValidRcMode;
+                    isValidRcMode       &&
+                    isValidCodec;
 
     DEBUG_PRINT_LOW("B-frame enablement = %u; Conditions for Resolution = %u, FPS = %u, Profile/Level = %u"
-                     " Layer condition = %u, LTR = %u, RC = %u\n",
-        enableBframes, isValidResolution, isValidFps, isValidProfileLevel,
-        isValidLayerCount, isValidLtrSetting, isValidRcMode);
+                     " Layer condition = %u, LTR = %u, RC = %u Codec = %u\n",
+                     enableBframes, isValidResolution, isValidFps, isValidProfileLevel,
+                     isValidLayerCount, isValidLtrSetting, isValidRcMode, isValidCodec);
 
     if (enableBframes && intra_period.num_bframes == 0) {
         intra_period.num_bframes = VENC_BFRAME_MAX_COUNT;
@@ -4883,12 +4924,16 @@ bool venc_dev::venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
     DEBUG_PRINT_LOW("venc_set_intra_period: nPFrames = %u, nBFrames: %u", (unsigned int)nPFrames, (unsigned int)nBFrames);
     int rc;
     struct v4l2_control control;
-    int pframe = 0, bframe = 0;
     char property_value[PROPERTY_VALUE_MAX] = {0};
 
     if ((streaming[OUTPUT_PORT] || streaming[CAPTURE_PORT]) && (intra_period.num_bframes != nBFrames)) {
         DEBUG_PRINT_ERROR("Invalid settings, Cannot change B frame count dynamically");
         return false;
+    }
+
+    if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264 &&
+        m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC) {
+        nBFrames = 0;
     }
 
     if ((codec_profile.profile != V4L2_MPEG_VIDEO_MPEG4_PROFILE_ADVANCED_SIMPLE) &&
@@ -5623,7 +5668,7 @@ bool venc_dev::venc_set_ltrmode(OMX_U32 enable, OMX_U32 count)
         pTemporalParams.ePattern = OMX_VIDEO_AndroidTemporalLayeringPatternNone;
         if(venc_set_temporal_layers(&pTemporalParams)) {
             DEBUG_PRINT_ERROR("Failed to disable layer encoding for VP8 when LTR is enabled\n");
-            return OMX_ErrorUndefined;
+            return false;
         }
     }
 

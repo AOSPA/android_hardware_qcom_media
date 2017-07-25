@@ -667,7 +667,7 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
 #ifdef _ANDROID_
 
     char property_value[PROPERTY_VALUE_MAX] = {0};
-    property_get("vidc.debug.level", property_value, "1");
+    property_get("vendor.vidc.debug.level", property_value, "1");
     debug_level = strtoul(property_value, NULL, 16);
     property_value[0] = '\0';
 
@@ -705,15 +705,25 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     Platform::Config::getInt32(Platform::vidc_dec_log_out,
             (int32_t *)&m_debug.out_buffer_log, 0);
 
-    snprintf(m_debug.log_loc, PROPERTY_VALUE_MAX, "%s", BUFFER_LOG_LOC);
+    property_value[0] = '\0';
+    property_get("vendor.vidc.dec.log.in", property_value, "0");
+    m_debug.in_buffer_log |= atoi(property_value);
+
+    DEBUG_PRINT_HIGH("vendor.vidc.dec.log.in value is %d", m_debug.in_buffer_log);
 
     property_value[0] = '\0';
-    property_get("vidc.dec.meta.log.out", property_value, "0");
+    property_get("vendor.vidc.dec.log.out", property_value, "0");
+    m_debug.out_buffer_log |= atoi(property_value);
+
+    DEBUG_PRINT_HIGH("vendor.vidc.dec.log.out value is %d", m_debug.out_buffer_log);
+
+
+    property_value[0] = '\0';
+    property_get("vendor.vidc.dec.meta.log.out", property_value, "0");
     m_debug.out_meta_buffer_log = atoi(property_value);
-    snprintf(m_debug.log_loc, PROPERTY_VALUE_MAX, "%s", BUFFER_LOG_LOC);
 
     property_value[0] = '\0';
-    property_get("vidc.log.loc", property_value, "");
+    property_get("vendor.vidc.log.loc", property_value, BUFFER_LOG_LOC);
     if (*property_value)
         strlcpy(m_debug.log_loc, property_value, PROPERTY_VALUE_MAX);
 
@@ -1544,14 +1554,8 @@ void omx_vdec::process_event_cb(void *ctxt)
                                                     pThis->omx_report_error ();
                                                 } else {
                                                     /*Check if we need generate event for Flush done*/
-                                                    if (BITMASK_PRESENT(&pThis->m_flags,
-                                                                OMX_COMPONENT_INPUT_FLUSH_PENDING)) {
-                                                        BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_INPUT_FLUSH_PENDING);
-                                                        DEBUG_PRINT_LOW("Input Flush completed - Notify Client");
-                                                        pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
-                                                                OMX_EventCmdComplete,OMX_CommandFlush,
-                                                                OMX_CORE_INPUT_PORT_INDEX,NULL );
-                                                    }
+                                                    pThis->notify_flush_done(ctxt);
+
                                                     if (BITMASK_PRESENT(&pThis->m_flags,
                                                                 OMX_COMPONENT_IDLE_PENDING)) {
                                                         if (pThis->stream_off(OMX_CORE_INPUT_PORT_INDEX)) {
@@ -1585,14 +1589,8 @@ void omx_vdec::process_event_cb(void *ctxt)
                                                     pThis->omx_report_error ();
                                                 } else {
                                                     /*Check if we need generate event for Flush done*/
-                                                    if (BITMASK_PRESENT(&pThis->m_flags,
-                                                                OMX_COMPONENT_OUTPUT_FLUSH_PENDING)) {
-                                                        DEBUG_PRINT_LOW("Notify Output Flush done");
-                                                        BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_OUTPUT_FLUSH_PENDING);
-                                                        pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
-                                                                OMX_EventCmdComplete,OMX_CommandFlush,
-                                                                OMX_CORE_OUTPUT_PORT_INDEX,NULL );
-                                                    }
+                                                    pThis->notify_flush_done(ctxt);
+
                                                     if (BITMASK_PRESENT(&pThis->m_flags,
                                                                 OMX_COMPONENT_OUTPUT_FLUSH_IN_DISABLE_PENDING)) {
                                                         DEBUG_PRINT_LOW("Internal flush complete");
@@ -1970,7 +1968,8 @@ int omx_vdec::log_input_buffers(const char *buffer_addr, int buffer_len)
         }
         m_debug.infile = fopen (m_debug.infile_name, "ab");
         if (!m_debug.infile) {
-            DEBUG_PRINT_HIGH("Failed to open input file: %s for logging", m_debug.infile_name);
+            DEBUG_PRINT_HIGH("Failed to open input file: %s for logging (%d:%s)",
+                             m_debug.infile_name, errno, strerror(errno));
             m_debug.infile_name[0] = '\0';
             return -1;
         }
@@ -2556,6 +2555,10 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
                 drv_ctx.video_driver_fd);
     }
     //memset(&h264_mv_buff,0,sizeof(struct h264_mv_buffer));
+
+    OMX_INIT_STRUCT(&m_sParamLowLatency, QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE);
+    m_sParamLowLatency.nNumFrames = 0;
+
     return eRet;
 }
 
@@ -3246,6 +3249,42 @@ bool omx_vdec::execute_input_flush()
     return bRet;
 }
 
+/*=========================================================================
+FUNCTION : notify_flush_done
+
+DESCRIPTION
+Notifies flush done to the OMX Client.
+
+PARAMETERS
+ctxt -- Context information related to the self..
+
+RETURN VALUE
+NONE
+==========================================================================*/
+void omx_vdec::notify_flush_done(void *ctxt) {
+
+    omx_vdec *pThis = (omx_vdec *) ctxt;
+
+    if (!pThis->input_flush_progress && !pThis->output_flush_progress) {
+        if (BITMASK_PRESENT(&pThis->m_flags,
+                OMX_COMPONENT_OUTPUT_FLUSH_PENDING)) {
+            DEBUG_PRINT_LOW("Notify Output Flush done");
+            BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_OUTPUT_FLUSH_PENDING);
+            pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
+                OMX_EventCmdComplete,OMX_CommandFlush,
+                OMX_CORE_OUTPUT_PORT_INDEX,NULL );
+        }
+
+        if (BITMASK_PRESENT(&pThis->m_flags,
+                OMX_COMPONENT_INPUT_FLUSH_PENDING)) {
+            BITMASK_CLEAR (&pThis->m_flags,OMX_COMPONENT_INPUT_FLUSH_PENDING);
+            DEBUG_PRINT_LOW("Input Flush completed - Notify Client");
+            pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
+                    OMX_EventCmdComplete,OMX_CommandFlush,
+                    OMX_CORE_INPUT_PORT_INDEX,NULL );
+        }
+    }
+}
 
 /* ======================================================================
    FUNCTION
@@ -5396,6 +5435,8 @@ OMX_ERRORTYPE  omx_vdec::use_output_buffer(
         if (i == (drv_ctx.op_buf.actualcount - 1) && !streaming[CAPTURE_PORT]) {
             enum v4l2_buf_type buf_type;
             int rr = 0;
+
+            set_buffer_req(&drv_ctx.op_buf);
             buf_type=V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
             if (rr = ioctl(drv_ctx.video_driver_fd, VIDIOC_STREAMON, &buf_type)) {
                 DEBUG_PRINT_ERROR("STREAMON FAILED : %d", rr);
@@ -6384,6 +6425,8 @@ OMX_ERRORTYPE  omx_vdec::allocate_output_buffer(
 
             if (i == (drv_ctx.op_buf.actualcount -1 ) && !streaming[CAPTURE_PORT]) {
                 enum v4l2_buf_type buf_type;
+
+                set_buffer_req(&drv_ctx.op_buf);
                 buf_type=V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
                 rc=ioctl(drv_ctx.video_driver_fd, VIDIOC_STREAMON,&buf_type);
                 if (rc) {
@@ -9851,6 +9894,47 @@ void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
                         }
                     }
                     break;
+                case MSM_VIDC_EXTRADATA_UBWC_CR_STAT_INFO:
+                          struct msm_vidc_ubwc_cr_stats_info *cr_stats_info;
+                          struct UBWCStats stats[2];
+
+                          cr_stats_info = (struct msm_vidc_ubwc_cr_stats_info *)(void *)data->data;
+                          stats[0].version = UBWC_2_0;
+                          stats[0].bDataValid = (uint8_t)true;
+                          stats[0].ubwc_stats.nCRStatsTile32 = cr_stats_info->stats_tile_32;
+                          stats[0].ubwc_stats.nCRStatsTile64 = cr_stats_info->stats_tile_64;
+                          stats[0].ubwc_stats.nCRStatsTile96 = cr_stats_info->stats_tile_96;
+                          stats[0].ubwc_stats.nCRStatsTile128 = cr_stats_info->stats_tile_128;
+                          stats[0].ubwc_stats.nCRStatsTile160 = cr_stats_info->stats_tile_160;
+                          stats[0].ubwc_stats.nCRStatsTile192 = cr_stats_info->stats_tile_192;
+                          stats[0].ubwc_stats.nCRStatsTile256 = cr_stats_info->stats_tile_256;
+                          DEBUG_PRINT_HIGH("Field 0 : 32 Tile = %d 64 Tile = %d 96 Tile = %d 128 Tile = %d 160 Tile = %d 192 Tile = %d 256 Tile = %d\n",
+                              cr_stats_info->stats_tile_32, cr_stats_info->stats_tile_64,
+                              cr_stats_info->stats_tile_96, cr_stats_info->stats_tile_128,
+                              cr_stats_info->stats_tile_160, cr_stats_info->stats_tile_192,
+                              cr_stats_info->stats_tile_256);
+                          stats[1].bDataValid = (uint8_t)false;
+                          if (drv_ctx.interlace != VDEC_InterlaceFrameProgressive) {
+
+                              cr_stats_info += sizeof(struct msm_vidc_ubwc_cr_stats_info);
+                              stats[1].version = UBWC_2_0;
+                              stats[1].bDataValid = (uint8_t)true;
+                              stats[1].ubwc_stats.nCRStatsTile32 = cr_stats_info->stats_tile_32;
+                              stats[1].ubwc_stats.nCRStatsTile64 = cr_stats_info->stats_tile_64;
+                              stats[1].ubwc_stats.nCRStatsTile96 = cr_stats_info->stats_tile_96;
+                              stats[1].ubwc_stats.nCRStatsTile128 = cr_stats_info->stats_tile_128;
+                              stats[1].ubwc_stats.nCRStatsTile160 = cr_stats_info->stats_tile_160;
+                              stats[1].ubwc_stats.nCRStatsTile192 = cr_stats_info->stats_tile_192;
+                              stats[1].ubwc_stats.nCRStatsTile256 = cr_stats_info->stats_tile_256;
+                              DEBUG_PRINT_HIGH("Field 1 : 32 Tile = %d 64 Tile = %d 96 Tile = %d 128 Tile = %d 160 Tile = %d 192 Tile = %d 256 Tile = %d\n",
+                                      cr_stats_info->stats_tile_32, cr_stats_info->stats_tile_64,
+                                      cr_stats_info->stats_tile_96, cr_stats_info->stats_tile_128,
+                                      cr_stats_info->stats_tile_160, cr_stats_info->stats_tile_192,
+                                      cr_stats_info->stats_tile_256);
+                          }
+                          setMetaData((private_handle_t *)native_buffer[buf_index].privatehandle,
+                              SET_UBWC_CR_STATS_INFO, (void*)stats);
+                    break;
                 case MSM_VIDC_EXTRADATA_STREAM_USERDATA:
                     if (client_extradata & OMX_EXTNUSER_EXTRADATA) {
                         append_user_extradata(p_extra, data);
@@ -10078,6 +10162,14 @@ OMX_ERRORTYPE omx_vdec::enable_extradata(OMX_U64 requested_extradata,
             control.id = V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA;
             control.value = V4L2_MPEG_VIDC_EXTRADATA_OUTPUT_CROP;
             DEBUG_PRINT_LOW("Enable output crop extra data");
+            if (ioctl(drv_ctx.video_driver_fd, VIDIOC_S_CTRL, &control)) {
+                DEBUG_PRINT_HIGH("Failed to set output crop extradata");
+            }
+        }
+        if (requested_extradata & OMX_UBWC_CR_STATS_INFO_EXTRADATA) {
+            control.id = V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA;
+            control.value = V4L2_MPEG_VIDC_EXTRADATA_UBWC_CR_STATS_INFO;
+            DEBUG_PRINT_LOW("Enable UBWC stats extra data");
             if (ioctl(drv_ctx.video_driver_fd, VIDIOC_S_CTRL, &control)) {
                 DEBUG_PRINT_HIGH("Failed to set output crop extradata");
             }

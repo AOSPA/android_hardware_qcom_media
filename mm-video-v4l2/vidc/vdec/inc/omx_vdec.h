@@ -189,6 +189,7 @@ extern "C" {
 #define OMX_VC1_SEQDISP_INFO_EXTRADATA  0x40000000
 #define OMX_DISPLAY_INFO_EXTRADATA  0x80000000
 #define OMX_HDR_COLOR_INFO_EXTRADATA  0x100000000
+#define OMX_UBWC_CR_STATS_INFO_EXTRADATA  0x200000000
 #define DRIVER_EXTRADATA_MASK   0x0000FFFF
 
 #define OMX_INTERLACE_EXTRADATA_SIZE ((sizeof(OMX_OTHER_EXTRADATATYPE) +\
@@ -843,6 +844,7 @@ class omx_vdec: public qc_omx_component
         bool execute_omx_flush(OMX_U32);
         bool execute_output_flush();
         bool execute_input_flush();
+        void notify_flush_done(void *ctxt);
         OMX_ERRORTYPE empty_buffer_done(OMX_HANDLETYPE hComp,
                 OMX_BUFFERHEADERTYPE * buffer);
 
@@ -1168,6 +1170,7 @@ class omx_vdec: public qc_omx_component
 
         OMX_VIDEO_PARAM_PROFILELEVELTYPE m_profile_lvl;
         OMX_U32 m_profile;
+        QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE m_sParamLowLatency;
 
         //variables to handle dynamic buffer mode
         bool dynamic_buf_mode;
