@@ -552,6 +552,12 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                         DEBUG_PRINT_ERROR("ERROR: (In_PORT) buffer count/size can change only if port is unallocated !");
                         return OMX_ErrorInvalidState;
                     }
+                    if (m_inp_mem_ptr &&
+                            (portDefn->nBufferCountActual != m_sInPortDef.nBufferCountActual ||
+                            portDefn->nBufferSize != m_sInPortDef.nBufferSize)) {
+                        DEBUG_PRINT_ERROR("ERROR: (In_PORT) buffer count/size can change only if port is unallocated !");
+                        return OMX_ErrorInvalidState;
+                    }
                     if (portDefn->nBufferCountMin > portDefn->nBufferCountActual) {
                         DEBUG_PRINT_ERROR("ERROR: (In_PORT) Min buffers (%u) > actual count (%u)",
                                 (unsigned int)portDefn->nBufferCountMin, (unsigned int)portDefn->nBufferCountActual);
@@ -587,6 +593,17 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             &m_sOutPortDef.nBufferSize,
                             m_sOutPortDef.nPortIndex);
                     m_sInPortDef.nBufferCountActual = portDefn->nBufferCountActual;
+                } else if (PORT_INDEX_EXTRADATA_OUT == portDefn->nPortIndex) {
+                    DEBUG_PRINT_LOW("extradata actual cnt =%u , min cnt =%u ,buffersize requested = %u",
+                        (unsigned int)portDefn->nBufferCountActual,(unsigned int)portDefn->nBufferCountMin,
+                        (unsigned int)portDefn->nBufferSize);
+                    if (portDefn->nBufferCountActual != m_client_out_extradata_info.getBufferCount() ||
+                        portDefn->nBufferSize != m_client_out_extradata_info.getSize()) {
+                            DEBUG_PRINT_ERROR("ERROR: Bad parameeters request for extradata limit %d size - %d",
+                            portDefn->nBufferCountActual, portDefn->nBufferSize);
+                            eRet = OMX_ErrorBadParameter;
+                            break;
+                    }
                 } else if (PORT_INDEX_OUT == portDefn->nPortIndex) {
 
                     if (portDefn->nBufferCountActual > MAX_NUM_OUTPUT_BUFFERS) {
@@ -1209,6 +1226,25 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             (unsigned int)m_sOutPortDef.nBufferCountActual,
                             (unsigned int)m_sOutPortDef.nBufferCountMin,
                             (unsigned int)m_sOutPortDef.nBufferSize);
+                }
+                break;
+            }
+        case OMX_QTIIndexParamVideoClientExtradata:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_EXTRADATA_ENABLE);
+                DEBUG_PRINT_LOW("set_parameter: OMX_QTIIndexParamVideoClientExtradata");
+                QOMX_EXTRADATA_ENABLE *pParam = (QOMX_EXTRADATA_ENABLE *)paramData;
+
+                if (m_state != OMX_StateLoaded) {
+                    DEBUG_PRINT_ERROR("Set Parameter called in Invalid state");
+                    return OMX_ErrorIncorrectStateOperation;
+                }
+
+                if (pParam->nPortIndex == PORT_INDEX_EXTRADATA_OUT) {
+                    m_client_out_extradata_info.enable_client_extradata(pParam->bEnable);
+                } else {
+                    DEBUG_PRINT_ERROR("Incorrect portIndex - %d", pParam->nPortIndex);
+                    eRet = OMX_ErrorUnsupportedIndex;
                 }
                 break;
             }
@@ -2296,10 +2332,17 @@ int omx_venc::async_message_process (void *context, void* message)
                     OMX_COMPONENT_GENERATE_EBD);
             break;
         case VEN_MSG_OUTPUT_BUFFER_DONE:
+        {
             omxhdr = (OMX_BUFFERHEADERTYPE*)m_sVenc_msg->buf.clientdata;
+            OMX_U32 bufIndex = (OMX_U32)(omxhdr - omx->m_out_mem_ptr);
 
             if ( (omxhdr != NULL) &&
-                    ((OMX_U32)(omxhdr - omx->m_out_mem_ptr)  < omx->m_sOutPortDef.nBufferCountActual)) {
+                    (bufIndex  < omx->m_sOutPortDef.nBufferCountActual)) {
+                auto_lock l(omx->m_buf_lock);
+                if (BITMASK_ABSENT(&(omx->m_out_bm_count), bufIndex)) {
+                    DEBUG_PRINT_ERROR("Recieved FBD for buffer that is already freed !");
+                    break;
+                }
                 if (!omx->is_secure_session() && (m_sVenc_msg->buf.len <=  omxhdr->nAllocLen)) {
                     omxhdr->nFilledLen = m_sVenc_msg->buf.len;
                     omxhdr->nOffset = m_sVenc_msg->buf.offset;
@@ -2342,6 +2385,7 @@ int omx_venc::async_message_process (void *context, void* message)
             omx->post_event ((unsigned long)omxhdr,m_sVenc_msg->statuscode,
                     OMX_COMPONENT_GENERATE_FBD);
             break;
+        }
         case VEN_MSG_NEED_OUTPUT_BUFFER:
             //TBD what action needs to be done here??
             break;

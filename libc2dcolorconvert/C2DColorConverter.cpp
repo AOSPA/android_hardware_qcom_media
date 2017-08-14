@@ -41,13 +41,15 @@ C2DColorConverter::C2DColorConverter()
 
     mC2DLibHandle = dlopen("libC2D2.so", RTLD_NOW);
     if (!mC2DLibHandle) {
-        ALOGE("ERROR: could not dlopen libc2d2.so: %s. C2D is disabled.", dlerror());
+        ALOGE("%s: ERROR: could not dlopen libc2d2.so: %s. C2D is disabled.",
+                                                    __FUNCTION__, dlerror());
         enabled = false;
         return;
     }
     mAdrenoUtilsHandle = dlopen("libadreno_utils.so", RTLD_NOW);
     if (!mAdrenoUtilsHandle) {
-        ALOGE("ERROR: could not dlopen libadreno_utils.so: %s.. C2D is disabled.", dlerror());
+        ALOGE("%s: ERROR: could not dlopen libadreno_utils.so: %s.. C2D is disabled.",
+                                                    __FUNCTION__, dlerror());
         enabled = false;
         return;
     }
@@ -59,14 +61,18 @@ C2DColorConverter::C2DColorConverter()
     mC2DFlush = (LINK_c2dFlush)dlsym(mC2DLibHandle, "c2dFlush");
     mC2DFinish = (LINK_c2dFinish)dlsym(mC2DLibHandle, "c2dFinish");
     mC2DWaitTimestamp = (LINK_c2dWaitTimestamp)dlsym(mC2DLibHandle, "c2dWaitTimestamp");
-    mC2DDestroySurface = (LINK_c2dDestroySurface)dlsym(mC2DLibHandle, "c2dDestroySurfaceq");
+    mC2DDestroySurface = (LINK_c2dDestroySurface)dlsym(mC2DLibHandle, "c2dDestroySurface");
     mC2DMapAddr = (LINK_c2dMapAddr)dlsym(mC2DLibHandle, "c2dMapAddr");
     mC2DUnMapAddr = (LINK_c2dUnMapAddr)dlsym(mC2DLibHandle, "c2dUnMapAddr");
 
     if (!mC2DCreateSurface || !mC2DUpdateSurface || !mC2DReadSurface
         || !mC2DDraw || !mC2DFlush || !mC2DFinish || !mC2DWaitTimestamp
         || !mC2DDestroySurface || !mC2DMapAddr || !mC2DUnMapAddr) {
-        ALOGE("%s: dlsym ERROR. C2D is disabled.", __FUNCTION__);
+        ALOGE("%s: dlsym ERROR. C2D is disabled. mC2DCreateSurface[%p] mC2DUpdateSurface[%p] "
+              "mC2DReadSurface[%p] mC2DDraw[%p] mC2DFlush[%p] mC2DFinish[%p] mC2DWaitTimestamp[%p] "
+              "mC2DDestroySurface[%p] mC2DMapAddr[%p] mC2DUnMapAddr[%p]", __FUNCTION__,
+              mC2DCreateSurface, mC2DUpdateSurface, mC2DReadSurface, mC2DDraw, mC2DFlush, mC2DFinish,
+              mC2DWaitTimestamp, mC2DDestroySurface, mC2DMapAddr, mC2DUnMapAddr);
         enabled = false;
         return;
     }
@@ -181,8 +187,10 @@ bool C2DColorConverter::convertC2D(int srcFd, void *srcBase, void * srcData,
     } else {
 
       srcMappedGpuAddr = (uint8_t *)getMappedGPUAddr(srcFd, srcData, mSrcSize);
-      if (!srcMappedGpuAddr)
-        return false;
+      if (!srcMappedGpuAddr) {
+          pthread_mutex_unlock(&mLock);
+          return false;
+      }
 
       if (isYUVSurface(mSrcFormat)) {
         ret = updateYUVSurfaceDef(srcMappedGpuAddr, srcBase, srcData, true);
@@ -195,6 +203,7 @@ bool C2DColorConverter::convertC2D(int srcFd, void *srcBase, void * srcData,
         dstMappedGpuAddr = (uint8_t *)getMappedGPUAddr(dstFd, dstData, mDstSize);
         if (!dstMappedGpuAddr) {
           unmapGPUAddr((unsigned long)srcMappedGpuAddr);
+          pthread_mutex_unlock(&mLock);
           return false;
         }
 
@@ -229,7 +238,7 @@ bool C2DColorConverter::convertC2D(int srcFd, void *srcBase, void * srcData,
             status = false;
           }
         } else {
-          ALOGE("%s; Update dst surface def failed (%d)", __FUNCTION__, ret);
+          ALOGE("%s: Update dst surface def failed (%d)", __FUNCTION__, ret);
           unmapGPUAddr((unsigned long)srcMappedGpuAddr);
           unmapGPUAddr((unsigned long)dstMappedGpuAddr);
           status = false;
@@ -269,6 +278,17 @@ int32_t C2DColorConverter::getDummySurfaceDef(ColorConvertFormat format,
 {
     void *surfaceDef = NULL;
     C2D_SURFACE_TYPE hostSurfaceType;
+    C2D_STATUS ret;
+
+    if (isSource){
+        if (mSrcSurface) {
+            mC2DDestroySurface(mSrcSurface);
+            mSrcSurface = 0;
+        }
+    } else if (mDstSurface) {
+        mC2DDestroySurface(mDstSurface);
+        mDstSurface = 0;
+    }
 
     if (isYUVSurface(format)) {
         C2D_YUV_SURFACE_DEF **surfaceYUVDef = (C2D_YUV_SURFACE_DEF **)
@@ -298,7 +318,7 @@ int32_t C2DColorConverter::getDummySurfaceDef(ColorConvertFormat format,
 
         if (format == YCbCr420P ||
             format == YCrCb420P) {
-          printf("half stride for Cb Cr planes \n");
+          ALOGI("%s: half stride for Cb Cr planes \n", __FUNCTION__);
           (*surfaceYUVDef)->stride1 = calcStride(format, width) / 2;
           (*surfaceYUVDef)->phys2 = (void *)0xaaaaaaaa;
           (*surfaceYUVDef)->stride2 = calcStride(format, width) / 2;
@@ -333,14 +353,14 @@ int32_t C2DColorConverter::getDummySurfaceDef(ColorConvertFormat format,
         hostSurfaceType = C2D_SURFACE_RGB_HOST;
     }
 
-    mC2DCreateSurface(isSource ? &mSrcSurface :
+    ret = mC2DCreateSurface(isSource ? &mSrcSurface :
                       &mDstSurface,
                       isSource ? C2D_SOURCE : C2D_TARGET,
                       (C2D_SURFACE_TYPE)(hostSurfaceType
                                          | C2D_SURFACE_WITH_PHYS
                                          | C2D_SURFACE_WITH_PHYS_DUMMY),
                       surfaceDef);
-    return 0;
+    return (int32_t) ret;
 }
 
 C2D_STATUS C2DColorConverter::updateYUVSurfaceDef(uint8_t *gpuAddr, void *base,
@@ -566,12 +586,12 @@ void * C2DColorConverter::getMappedGPUAddr(int bufFD, void *bufPtr, size_t bufLe
     status = mC2DMapAddr(bufFD, bufPtr, bufLen, 0, KGSL_USER_MEM_TYPE_ION,
                          &gpuaddr);
     if (status != C2D_STATUS_OK) {
-        ALOGE("c2dMapAddr failed: status %d fd %d ptr %p len %zu flags %d",
-                status, bufFD, bufPtr, bufLen, KGSL_USER_MEM_TYPE_ION);
+        ALOGE("%s: c2dMapAddr failed: status %d fd %d ptr %p len %zu flags %d",
+              __FUNCTION__, status, bufFD, bufPtr, bufLen, KGSL_USER_MEM_TYPE_ION);
         return NULL;
     }
-    ALOGV("c2d mapping created: gpuaddr %p fd %d ptr %p len %zu",
-            gpuaddr, bufFD, bufPtr, bufLen);
+    ALOGV("%s: c2d mapping created: gpuaddr %p fd %d ptr %p len %zu",
+          __FUNCTION__, gpuaddr, bufFD, bufPtr, bufLen);
 
     return gpuaddr;
 }
@@ -582,7 +602,8 @@ bool C2DColorConverter::unmapGPUAddr(unsigned long gAddr)
     C2D_STATUS status = mC2DUnMapAddr((void*)gAddr);
 
     if (status != C2D_STATUS_OK)
-        ALOGE("c2dUnMapAddr failed: status %d gpuaddr %08lx", status, gAddr);
+        ALOGE("%s: c2dUnMapAddr failed: status %d gpuaddr %08lx",
+                                     __FUNCTION__, status, gAddr);
 
     return (status == C2D_STATUS_OK);
 }
@@ -738,7 +759,7 @@ int32_t C2DColorConverter::dumpOutput(char * filename, char mode) {
 
       if (mDstFormat == YCbCr420P ||
           mDstFormat == YCrCb420P) {
-          printf("Dump Cb and Cr separately for Planar\n");
+          ALOGI("%s: Dump Cb and Cr separately for Planar\n", __FUNCTION__);
           //dump Cb/Cr
           base = (uint8_t *)dstSurfaceDef->plane1;
           stride = dstSurfaceDef->stride1;
@@ -774,9 +795,11 @@ int32_t C2DColorConverter::dumpOutput(char * filename, char mode) {
       stride = dstSurfaceDef->stride;
       sliceHeight = dstSurfaceDef->height;
 
-      printf("rgb surface base is %p", base);
-      printf("rgb surface dumpsslice height is %lu\n", (unsigned long)sliceHeight);
-      printf("rgb surface dump stride is %lu\n", (unsigned long)stride);
+      ALOGI("%s: rgb surface base is %p", __FUNCTION__, base);
+      ALOGI("%s: rgb surface dumpsslice height is %lu\n",
+                                   __FUNCTION__, (unsigned long)sliceHeight);
+      ALOGI("%s: rgb surface dump stride is %lu\n",
+                                   __FUNCTION__, (unsigned long)stride);
 
       int bpp = 1; //bytes per pixel
       if (mDstFormat == RGB565) {
@@ -789,7 +812,7 @@ int32_t C2DColorConverter::dumpOutput(char * filename, char mode) {
       for (size_t i = 0; i < sliceHeight; i++) {
         ret = write(fd, base, mDstWidth*bpp);
         if (ret < 0) {
-          printf("write failed, count = %d\n", count);
+          ALOGI("%s: write failed, count = %d\n", __FUNCTION__, count);
           goto cleanup;
         }
         base += stride;

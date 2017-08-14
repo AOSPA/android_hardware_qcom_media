@@ -143,6 +143,9 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     operating_rate = 0;
     memset(&color_space, 0x0, sizeof(color_space));
     memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
+    client_req_disable_bframe   = false;
+    client_req_disable_temporal_layers  = false;
+
 
     Platform::Config::getInt32(Platform::vidc_enc_log_in,
             (int32_t *)&m_debug.in_buffer_log, 0);
@@ -425,10 +428,10 @@ void* venc_dev::async_venc_message_thread (void *input)
         OMX_U64 time_diff = (OMX_U32)((tv.tv_sec * 1000000 + tv.tv_usec) -
                 (stats.prev_tv.tv_sec * 1000000 + stats.prev_tv.tv_usec));
         if (time_diff >= 5000000) {
-            if (stats.prev_tv.tv_sec) {
-                OMX_U32 num_fbd = omx->handle->fbd - stats.prev_fbd;
+            OMX_U32 num_fbd = omx->handle->fbd - stats.prev_fbd;
+            if (stats.prev_tv.tv_sec && num_fbd && time_diff) {
                 float framerate = num_fbd * 1000000/(float)time_diff;
-                OMX_U32 bitrate = (stats.bytes_generated * 8/num_fbd) * framerate;
+                OMX_U32 bitrate = (stats.bytes_generated * 8 / num_fbd) * framerate;
                 DEBUG_PRINT_HIGH("stats: avg. fps %0.2f, bitrate %d",
                     framerate, bitrate);
             }
@@ -491,7 +494,7 @@ static OMX_ERRORTYPE subscribe_to_events(int fd)
 bool inline venc_dev::venc_query_cap(struct v4l2_queryctrl &cap) {
 
     if (ioctl(m_nDriver_fd, VIDIOC_QUERYCTRL, &cap)) {
-        DEBUG_PRINT_ERROR("Query caps for id = %u failed\n", cap.id);
+        DEBUG_PRINT_ERROR("Query caps for id = %u failed", cap.id);
         return false;
     }
     return true;
@@ -507,7 +510,7 @@ bool inline venc_dev::venc_validate_range(OMX_S32 id, OMX_S32 val) {
         if (val >= cap.minimum && val <= cap.maximum) {
             return true;
         } else {
-            DEBUG_PRINT_ERROR("id = %u, value = %u, min = %u, max = %u\n",
+            DEBUG_PRINT_ERROR("id = %u, value = %u, min = %u, max = %u",
                 cap.id, val, cap.minimum, cap.maximum);
         }
     }
@@ -593,6 +596,38 @@ inline int get_yuv_size(unsigned long fmt, int width, int height) {
             break;
     }
     return size;
+}
+
+void venc_dev::append_extradata_mbidata(OMX_OTHER_EXTRADATATYPE *p_extra,
+            struct msm_vidc_extradata_header *p_extradata)
+{
+    OMX_U32 payloadSize = append_mbi_extradata(&p_extra->data, p_extradata);
+    p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + payloadSize, 4);
+    p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
+    p_extra->nPortIndex = OMX_DirOutput;
+    p_extra->eType = (OMX_EXTRADATATYPE)OMX_ExtraDataVideoEncoderMBInfo;
+    p_extra->nDataSize = payloadSize;
+
+}
+
+void venc_dev::append_extradata_ltrinfo(OMX_OTHER_EXTRADATATYPE *p_extra,
+            struct msm_vidc_extradata_header *p_extradata)
+{
+    p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + p_extradata->data_size, 4);
+    p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
+    p_extra->nPortIndex = OMX_DirOutput;
+    p_extra->eType = (OMX_EXTRADATATYPE) OMX_ExtraDataVideoLTRInfo;
+    p_extra->nDataSize = p_extradata->data_size;
+    memcpy(p_extra->data, p_extradata->data, p_extradata->data_size);
+}
+
+void venc_dev::append_extradata_none(OMX_OTHER_EXTRADATATYPE *p_extra)
+{
+    p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE), 4);
+    p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
+    p_extra->nPortIndex = OMX_DirOutput;
+    p_extra->eType = OMX_ExtraDataNone;
+    p_extra->nDataSize = 0;
 }
 
 bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
@@ -836,6 +871,14 @@ bool venc_dev::handle_output_extradata(void *buffer, int index)
 {
     OMX_BUFFERHEADERTYPE *p_bufhdr = (OMX_BUFFERHEADERTYPE *) buffer;
     OMX_OTHER_EXTRADATATYPE *p_extra = NULL;
+    OMX_OTHER_EXTRADATATYPE *p_clientextra = NULL;
+    if(venc_handle->m_sExtraData) {
+        p_clientextra = (OMX_OTHER_EXTRADATATYPE * )
+            ((venc_handle->m_client_output_extradata_mem_ptr + index) ->pBuffer);
+    }
+    if (p_clientextra == NULL) {
+        DEBUG_PRINT_ERROR("Client Extradata buffers not allocated\n");
+    }
 
     if (!output_extradata_info.uaddr) {
         DEBUG_PRINT_ERROR("Extradata buffers not allocated\n");
@@ -865,30 +908,27 @@ bool venc_dev::handle_output_extradata(void *buffer, int index)
         switch (p_extradata->type) {
             case MSM_VIDC_EXTRADATA_METADATA_MBI:
             {
-                OMX_U32 payloadSize = append_mbi_extradata(&p_extra->data, p_extradata);
-                p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + payloadSize, 4);
-                p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
-                p_extra->nPortIndex = OMX_DirOutput;
-                p_extra->eType = (OMX_EXTRADATATYPE)OMX_ExtraDataVideoEncoderMBInfo;
-                p_extra->nDataSize = payloadSize;
+                append_extradata_mbidata(p_extra, p_extradata);
+                if(p_clientextra) {
+                     append_extradata_mbidata(p_clientextra, p_extradata);
+                }
+                DEBUG_PRINT_LOW("MBI Extradata = 0x%x", *((OMX_U32 *)p_extra->data));
                 break;
             }
             case MSM_VIDC_EXTRADATA_METADATA_LTR:
             {
-                *p_extra->data = *p_extradata->data;
-                p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + p_extradata->data_size, 4);
-                p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
-                p_extra->nPortIndex = OMX_DirOutput;
-                p_extra->eType = (OMX_EXTRADATATYPE) OMX_ExtraDataVideoLTRInfo;
-                p_extra->nDataSize = p_extradata->data_size;
+                append_extradata_ltrinfo(p_extra, p_extradata);
+                if(p_clientextra) {
+                    append_extradata_ltrinfo(p_clientextra, p_extradata);
+                }
+                DEBUG_PRINT_LOW("LTRInfo Extradata = 0x%x", *((OMX_U32 *)p_extra->data));
                 break;
             }
             case MSM_VIDC_EXTRADATA_NONE:
-                p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE), 4);
-                p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
-                p_extra->nPortIndex = OMX_DirOutput;
-                p_extra->eType = OMX_ExtraDataNone;
-                p_extra->nDataSize = 0;
+                append_extradata_none(p_extra);
+                if(p_clientextra) {
+                    append_extradata_none(p_clientextra);
+                }
                 break;
             default:
                 /* No idea what this stuff is, just skip over it */
@@ -898,6 +938,9 @@ bool venc_dev::handle_output_extradata(void *buffer, int index)
         }
 
         p_extra = (OMX_OTHER_EXTRADATATYPE *)(((char *)p_extra) + p_extra->nSize);
+        if(p_clientextra) {
+            p_clientextra = (OMX_OTHER_EXTRADATATYPE *)(((char *)p_clientextra) + p_clientextra->nSize);
+        }
     } while (p_extradata->type != MSM_VIDC_EXTRADATA_NONE);
 
     /* Just for debugging: Traverse the list of extra datas  and spit it out onto log */
@@ -926,6 +969,8 @@ int venc_dev::venc_set_format(int format)
         switch (color_format) {
         case NV12_128m:
             return venc_set_color_format((OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m);
+        case NV12_UBWC:
+            return venc_set_color_format((OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed);
         default:
             return false;
         }
@@ -1737,6 +1782,7 @@ bool venc_dev::venc_get_buf_req(OMX_U32 *min_buff_count,
         output_extradata_info.buffer_size = extra_data_size;
         output_extradata_info.count = m_sOutput_buff_property.actualcount;
         output_extradata_info.size = output_extradata_info.buffer_size * output_extradata_info.count;
+        venc_handle->m_client_out_extradata_info.set_extradata_info(extra_data_size,m_sOutput_buff_property.actualcount);
     }
 
     DEBUG_PRINT_HIGH("venc_get_buf_req: port %d, wxh %dx%d, format %#x, driver min count %d, "
@@ -2233,6 +2279,17 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 extradata = true;
                 break;
             }
+        case OMX_ExtraDataVideoLTRInfo:
+            {
+                DEBUG_PRINT_LOW("venc_set_param: OMX_ExtraDataVideoLTRInfo");
+                OMX_BOOL extra_data =  *(OMX_BOOL *)(paramData);
+                if (venc_set_extradata(OMX_ExtraDataVideoLTRInfo, extra_data) == false) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_ExtraDataVideoLTRInfo failed");
+                    return false;
+                }
+                extradata = true;
+                break;
+            }
         case OMX_QcomIndexParamSequenceHeaderWithIDR:
             {
                 PrependSPSPPSToIDRFramesParams * pParam =
@@ -2341,47 +2398,34 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
             {
                 QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE* pParam =
                         (QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE*)paramData;
-                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE pTemporalParams;
+                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE temporalParams;
                 OMX_U32 i = 0, cumulativeBitrate = 0, cumulativeRatio = 0;
                 OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE qp_range;
 
-                if(m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 && !venc_check_for_hybrid_hp(OMX_VIDEO_AndroidTemporalLayeringPatternAndroid)) {
-                    DEBUG_PRINT_ERROR("Cannot set HybridHP invalid RC setting");
+                memset(&temporalParams, 0, sizeof(temporalParams));
+                temporalParams.nPLayerCountActual   = pParam->nHpLayers;
+                temporalParams.ePattern             = OMX_VIDEO_AndroidTemporalLayeringPatternAndroid;
+                temporalParams.nBLayerCountActual   = 0;
+                temporalParams.nLayerCountMax       = pParam->nHpLayers;
+                temporalParams.nBLayerCountMax      = 0;
+
+                if (!venc_convert_abs2cum_bitrate(pParam, temporalParams)) {
+                    DEBUG_PRINT_ERROR("Failed to convert Hybrid param to internal struct");
                     return false;
                 }
 
-                if(m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264 && m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC) {
-                    DEBUG_PRINT_ERROR("Only H264/HEVC supported for this setting");
+                if (!venc_validate_temporal_extn(temporalParams)) {
+                    DEBUG_PRINT_ERROR("Invalid settings for Hybrid HP");
                     return false;
                 }
 
-                memset(&pTemporalParams, 0, sizeof(pTemporalParams));
-                pTemporalParams.nPLayerCountActual = pParam->nHpLayers;
-                pTemporalParams.ePattern = OMX_VIDEO_AndroidTemporalLayeringPatternAndroid;
-
-                //In this API bitrate received is not in % but venc_set_temporal_layers expects it in %. Convert it.
-                DEBUG_PRINT_LOW(" Converting layered bitrate to percent bitrate\n");
-                for (i = 0; i < pTemporalParams.nPLayerCountActual; i++) {
-                    cumulativeBitrate += pParam->nTemporalLayerBitrateRatio[i];
-                }
-
-                DEBUG_PRINT_LOW(" Cumulativebitrate is:%u\n",cumulativeBitrate);
-                for (i = 0; i < pTemporalParams.nPLayerCountActual; i++) {
-                    pTemporalParams.nBitrateRatios[i] = ((pParam->nTemporalLayerBitrateRatio[i] * 100)/cumulativeBitrate) + cumulativeRatio;
-                    cumulativeRatio = pTemporalParams.nBitrateRatios[i];
-                    DEBUG_PRINT_LOW(" Layer %u bitrate %u percent %u\n",i,pParam->nTemporalLayerBitrateRatio[i],pTemporalParams.nBitrateRatios[i]);
-                }
-
-                pTemporalParams.bBitrateRatiosSpecified = OMX_TRUE;
-                if (venc_set_temporal_layers(&pTemporalParams)) {
-                    DEBUG_PRINT_ERROR("Setting OMX_QcomIndexParamVideoHybridHierpMode failed");
-                    return false;
-                }
+                venc_copy_temporal_settings(temporalParams);
 
                 if (!venc_set_intra_period(pParam->nKeyFrameInterval, 0)) {
                    DEBUG_PRINT_ERROR("Failed to set Intraperiod: %d", pParam->nKeyFrameInterval);
                    return false;
                 }
+
                 temporal_layers_config.nKeyFrameInterval = intra_period.num_pframes;
 
                 qp_range.minIQP = pParam->nMinQuantizer;
@@ -2466,11 +2510,16 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
             }
         case OMX_IndexParamAndroidVideoTemporalLayering:
             {
-                if (venc_set_temporal_layers(
-                        (OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE*)paramData) != OMX_ErrorNone) {
-                    DEBUG_PRINT_ERROR("set_param: Failed to configure temporal layers");
+                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE hierData;
+                memcpy(&hierData, paramData, sizeof(hierData));
+
+                if (!venc_validate_temporal_extn(hierData)) {
+                    DEBUG_PRINT_ERROR("set_param: Failed to validate temporal settings");
                     return false;
                 }
+
+                venc_copy_temporal_settings(hierData);
+
                 break;
             }
         case OMX_QTIIndexParamDisablePQ:
@@ -2595,6 +2644,7 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                         return false;
                     }
                 }
+                client_req_disable_bframe = (intraperiod->nBFrames == 0) ? true : false;
 
                 break;
             }
@@ -2700,34 +2750,27 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
             {
                 OMX_VIDEO_CONFIG_ANDROID_TEMPORALLAYERINGTYPE *pParam =
                     (OMX_VIDEO_CONFIG_ANDROID_TEMPORALLAYERINGTYPE *) configData;
-                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE pTemporalParams;
-                OMX_U32 i = 0;
+                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE temporalParams;
 
-                if(temporal_layers_config.hier_mode == HIER_P_HYBRID) {
-                    DEBUG_PRINT_ERROR("Hybrid HP is enabled. Run time layer change is not allowed.\n");
+                memset(&temporalParams, 0x0, sizeof(temporalParams));
+                temporalParams.nPLayerCountActual      = pParam->nPLayerCountActual;
+                temporalParams.bBitrateRatiosSpecified = pParam->bBitrateRatiosSpecified;
+                temporalParams.ePattern                = pParam->ePattern;
+                temporalParams.nLayerCountMax          = temporal_layers_config.nMaxLayers;
+
+                if (temporalParams.bBitrateRatiosSpecified == OMX_TRUE) {
+                    for (OMX_U32 i = 0; i < temporalParams.nPLayerCountActual; ++i) {
+                        temporalParams.nBitrateRatios[i] = pParam->nBitrateRatios[i];
+                    }
+                }
+
+                if (!venc_validate_temporal_extn(temporalParams)) {
+                    DEBUG_PRINT_ERROR("set_param: Failed to validate temporal settings");
                     return false;
                 }
 
-                if(pParam->nPLayerCountActual > temporal_layers_config.nMaxLayers) {
-                    DEBUG_PRINT_ERROR("HP : Requested more layers than max layers set. Requested : %u Set: %u",
-                                      pParam->nPLayerCountActual, temporal_layers_config.nMaxLayers);
-                    return false;
-                }
+                venc_copy_temporal_settings(temporalParams);
 
-                memset(&pTemporalParams, 0, sizeof(pTemporalParams));
-                pTemporalParams.nPLayerCountActual = pParam->nPLayerCountActual;
-                pTemporalParams.bBitrateRatiosSpecified = pParam->bBitrateRatiosSpecified;
-                pTemporalParams.ePattern = pParam->ePattern;
-                pTemporalParams.nLayerCountMax = temporal_layers_config.nMaxLayers;
-
-                for (; i < pTemporalParams.nPLayerCountActual; ++i) {
-                    pTemporalParams.nBitrateRatios[i] = pParam->nBitrateRatios[i];
-                }
-
-                if (venc_set_temporal_layers(&pTemporalParams)) {
-                    DEBUG_PRINT_ERROR("Setting OMX_IndexConfigAndroidVideoTemporalLayering failed");
-                    return false;
-                }
                 break;
             }
         case OMX_QcomIndexConfigBaseLayerId:
@@ -3135,32 +3178,25 @@ unsigned venc_dev::venc_start(void)
     // mbcount for IR depends on encode resolution.
     if (!venc_reconfigure_intra_refresh_period()) {
         DEBUG_PRINT_ERROR("Reconfiguring intra refresh period failed");
-        return 0;
+        return 1;
     }
 
     if (!venc_reconfigure_intra_period()) {
         DEBUG_PRINT_ERROR("Reconfiguring intra period failed");
-        return 0;
+        return 1;
     }
 
     // re-configure the temporal layers as RC-mode and key-frame interval
     // might have changed since the client last configured the layers.
-    if (temporal_layers_config.nPLayers > 1) {
-        if (venc_set_temporal_layers_internal() != OMX_ErrorNone) {
-            DEBUG_PRINT_ERROR("Re-configuring temporal layers failed !");
-        } else {
-            // request buffers on capture port again since internal (scratch)-
-            // buffer requirements may change (i.e if we switch from non-hybrid
-            // to hybrid mode and vice-versa)
-            struct v4l2_requestbuffers bufreq;
+    if (!venc_reconfigure_temporal_settings()) {
+        DEBUG_PRINT_ERROR("Reconfiguring temporal settings failed");
+        return 1;
+    }
 
-            bufreq.memory = V4L2_MEMORY_USERPTR;
-            bufreq.count = m_sOutput_buff_property.actualcount;
-            bufreq.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-            if (ioctl(m_nDriver_fd, VIDIOC_REQBUFS, &bufreq)) {
-                DEBUG_PRINT_ERROR("Request bufs failed while reconfiguring layers");
-            }
-        }
+    // If Hybrid HP is enable, LTR needs to be reset
+    if (!venc_reconfigure_ltrmode()) {
+        DEBUG_PRINT_ERROR("Reconfiguring LTR mode failed");
+        return 1;
     }
 
     venc_config_print();
@@ -3792,12 +3828,62 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         }
                     }
 
+                    struct UBWCStats cam_ubwc_stats[2];
+                    unsigned long long int cr = 1 << 16;
+
+                    if (getMetaData(handle, GET_UBWC_CR_STATS_INFO, (void *)cam_ubwc_stats) == 0) {
+                        if (cam_ubwc_stats[0].bDataValid) {
+                            switch (cam_ubwc_stats[0].version) {
+                            case UBWC_2_0:
+                                {
+                                    unsigned long long int sum = 0, weighted_sum = 0;
+
+                                    DEBUG_PRINT_HIGH("Field 0 : 32 Tile = %d 64 Tile = %d 96 Tile = %d "
+                                       "128 Tile = %d 160 Tile = %d 192 Tile = %d 256 Tile = %d\n",
+                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile32,
+                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile64,
+                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile96,
+                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile128,
+                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile160,
+                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile192,
+                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile256);
+
+                                    weighted_sum =
+                                        32  * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile32 +
+                                        64  * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile64 +
+                                        96  * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile96 +
+                                        128 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile128 +
+                                        160 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile160 +
+                                        192 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile192 +
+                                        256 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile256;
+
+                                    sum =
+                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile32 +
+                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile64 +
+                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile96 +
+                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile128 +
+                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile160 +
+                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile192 +
+                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile256;
+
+                                    cr = (weighted_sum && sum) ?
+                                        ((256 * sum) << 16) / weighted_sum : cr;
+                                }
+                                break;
+                            default:
+                                break;
+                            }
+                        }
+                    }
+
                     fd = handle->fd;
                     plane[0].data_offset = 0;
                     plane[0].length = handle->size;
                     plane[0].bytesused = handle->size;
+                    plane[0].reserved[2] = (unsigned long int)cr;
                     DEBUG_PRINT_LOW("venc_empty_buf: Opaque camera buf: fd = %d "
-                                ": filled %d of %d format 0x%lx", fd, plane[0].bytesused, plane[0].length, m_sVenc_cfg.inputformat);
+                                ": filled %d of %d format 0x%lx CR = %d", fd, plane[0].bytesused,
+                                plane[0].length, m_sVenc_cfg.inputformat, plane[0].reserved[2]);
                 }
             } else {
                 // color_format == 1 ==> RGBA to YUV Color-converted buffer
@@ -3834,7 +3920,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
             }
 
         plane[extra_idx].bytesused = 0;
-        plane[extra_idx].length = input_extradata_info.buffer_size;
+        plane[extra_idx].length = input_extradata_info.size;
         plane[extra_idx].m.userptr = (unsigned long) (input_extradata_info.uaddr + extradata_index * input_extradata_info.buffer_size);
 #ifdef USE_ION
         plane[extra_idx].reserved[0] = input_extradata_info.ion.fd_ion_data.fd;
@@ -4025,7 +4111,7 @@ bool venc_dev::venc_empty_batch(OMX_BUFFERHEADERTYPE *bufhdr, unsigned index)
                 }
 
                 plane[extra_idx].bytesused = 0;
-                plane[extra_idx].length = input_extradata_info.buffer_size;
+                plane[extra_idx].length = input_extradata_info.size;
                 plane[extra_idx].m.userptr = (unsigned long) (input_extradata_info.uaddr + extradata_index * input_extradata_info.buffer_size);
                 plane[extra_idx].reserved[0] = input_extradata_info.ion.fd_ion_data.fd;
                 plane[extra_idx].reserved[1] = input_extradata_info.buffer_size * extradata_index;
@@ -4324,6 +4410,9 @@ bool venc_dev::venc_set_extradata(OMX_U32 extra_data, OMX_BOOL enable)
         case OMX_ExtraDataVideoEncoderMBInfo:
             control.value = V4L2_MPEG_VIDC_EXTRADATA_METADATA_MBI;
             break;
+        case OMX_ExtraDataVideoLTRInfo:
+            control.value = V4L2_MPEG_VIDC_EXTRADATA_LTR;
+            break;
         case OMX_ExtraDataFrameDimension:
             control.value = V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP;
             break;
@@ -4574,7 +4663,7 @@ bool venc_dev::venc_set_profile(OMX_U32 eProfile)
             return false;
         }
     } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
-        //TODO: Set VP8 level/profile currently based on driver change
+        //In driver VP8 profile is hardcoded. No need to set anything from here
         return true;
     }  else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_HEVC_PROFILE;
@@ -4676,9 +4765,26 @@ bool venc_dev::venc_set_level(OMX_U32 eLevel)
                 break;
         }
     } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
-        //TODO: Set VP8 level/profile currently based on driver change
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_VP8_PROFILE_LEVEL;
-        control.value = V4L2_MPEG_VIDC_VIDEO_VP8_UNUSED;
+        switch (eLevel) {
+            case OMX_VIDEO_VP8Level_Version0:
+                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_0;
+                break;
+            case OMX_VIDEO_VP8Level_Version1:
+                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_1;
+                break;
+            case OMX_VIDEO_VP8Level_Version2:
+                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_2;
+                break;
+            case OMX_VIDEO_VP8Level_Version3:
+                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_3;
+                break;
+            case OMX_VIDEO_VP8LevelUnknown:
+            case OMX_VIDEO_VP8LevelMax:
+            default:
+                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_UNUSED;
+                break;
+        }
     } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_HEVC_TIER_LEVEL;
         switch (eLevel) {
@@ -4818,7 +4924,7 @@ bool venc_dev::venc_reconfigure_intra_period()
     bool isValidCodec        = false;
     bool isValidResolution   = false;
     bool isValidFps          = false;
-    bool isValidProfileLevel = false;
+    bool isValidOpRate       = false;
     bool isValidLayerCount   = false;
     bool enableBframes       = false;
     bool isValidLtrSetting   = false;
@@ -4827,8 +4933,15 @@ bool venc_dev::venc_reconfigure_intra_period()
 
     DEBUG_PRINT_LOW("venc_reconfigure_intra_period");
 
-    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 ||
-        m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
+    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 &&
+        ((codec_profile.profile == V4L2_MPEG_VIDEO_H264_PROFILE_MAIN) ||
+         (codec_profile.profile == V4L2_MPEG_VIDEO_H264_PROFILE_HIGH))) {
+        isValidCodec = true;
+    }
+
+    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC &&
+        ((codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN) ||
+         (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10))) {
         isValidCodec = true;
     }
 
@@ -4841,11 +4954,8 @@ bool venc_dev::venc_reconfigure_intra_period()
         isValidFps = true;
     }
 
-    if ((codec_profile.profile == V4L2_MPEG_VIDEO_H264_PROFILE_MAIN)             ||
-        (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN)        ||
-        (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10)      ||
-        (codec_profile.profile == V4L2_MPEG_VIDEO_H264_PROFILE_HIGH))   {
-        isValidProfileLevel = true;
+    if ((operating_rate >> 16) <= VENC_BFRAME_MAX_FPS) {
+        isValidOpRate = true;
     }
 
     if (temporal_layers_config.nPLayers <= 1) {
@@ -4863,16 +4973,18 @@ bool venc_dev::venc_reconfigure_intra_period()
 
     enableBframes = isValidResolution   &&
                     isValidFps          &&
-                    isValidProfileLevel &&
+                    isValidOpRate       &&
                     isValidLayerCount   &&
                     isValidLtrSetting   &&
                     isValidRcMode       &&
-                    isValidCodec;
+                    isValidCodec        &&
+                    !client_req_disable_bframe;
 
-    DEBUG_PRINT_LOW("B-frame enablement = %u; Conditions for Resolution = %u, FPS = %u, Profile/Level = %u"
-                     " Layer condition = %u, LTR = %u, RC = %u Codec = %u\n",
-                     enableBframes, isValidResolution, isValidFps, isValidProfileLevel,
-                     isValidLayerCount, isValidLtrSetting, isValidRcMode, isValidCodec);
+    DEBUG_PRINT_LOW("B-frame enablement = %u; Conditions for Resolution = %u, FPS = %u,"
+                     " Operating rate = %u, Layer condition = %u,"
+                     " LTR = %u, RC = %u Codec/Profile = %u Client request to disable = %u\n",
+                     enableBframes, isValidResolution, isValidFps, isValidOpRate,
+                     isValidLayerCount, isValidLtrSetting, isValidRcMode, isValidCodec, client_req_disable_bframe);
 
     if (enableBframes && intra_period.num_bframes == 0) {
         intra_period.num_bframes = VENC_BFRAME_MAX_COUNT;
@@ -5441,6 +5553,9 @@ unsigned long venc_dev::venc_get_color_format(OMX_COLOR_FORMATTYPE eColorFormat)
     case QOMX_COLOR_Format32bitRGBA8888Compressed:
         format = V4L2_PIX_FMT_RGBA8888_UBWC;
         break;
+    case QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed:
+        format = V4L2_PIX_FMT_NV12_TP10_UBWC;
+        break;
     default:
         DEBUG_PRINT_ERROR("Unsupported eColorFormat %#x", eColorFormat);
         format = V4L2_DEFAULT_OUTPUT_COLOR_FMT;
@@ -5475,6 +5590,9 @@ bool venc_dev::venc_set_color_format(OMX_COLOR_FORMATTYPE color_format)
             break;
         case QOMX_COLOR_Format32bitRGBA8888Compressed:
             m_sVenc_cfg.inputformat = V4L2_PIX_FMT_RGBA8888_UBWC;
+            break;
+        case QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed:
+            m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12_TP10_UBWC;
             break;
         default:
             DEBUG_PRINT_HIGH("WARNING: Unsupported Color format [%d]", color_format);
@@ -5539,6 +5657,11 @@ bool venc_dev::venc_calibrate_gop()
 
     if (!nPframes && nLayers) {
         DEBUG_PRINT_ERROR("nPframes should be non-zero when nLayers are present\n");
+        return false;
+    }
+
+    if (nBframes && !nPframes) {
+        DEBUG_PRINT_ERROR("nPframes should be non-zero when nBframes is non-zero\n");
         return false;
     }
 
@@ -5660,16 +5783,6 @@ bool venc_dev::venc_set_ltrmode(OMX_U32 enable, OMX_U32 count)
     if (enable && temporal_layers_config.hier_mode == HIER_P_HYBRID) {
         DEBUG_PRINT_ERROR("Invalid settings, LTR is being enabled with HybridHP");
         return false;
-    }
-
-    //If LTR is enabled and codec is VP8 we cannot have layered encoding - disable it
-    if(m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8 && temporal_layers_config.hier_mode != HIER_NONE && enable) {
-        OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE pTemporalParams;
-        pTemporalParams.ePattern = OMX_VIDEO_AndroidTemporalLayeringPatternNone;
-        if(venc_set_temporal_layers(&pTemporalParams)) {
-            DEBUG_PRINT_ERROR("Failed to disable layer encoding for VP8 when LTR is enabled\n");
-            return false;
-        }
     }
 
     ctrl[0].id = V4L2_CID_MPEG_VIDC_VIDEO_LTRMODE;
@@ -6340,9 +6453,9 @@ bool venc_dev::venc_get_temporal_layer_caps(OMX_U32 *nMaxLayers,
         query_ctrl.id = V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS;
     }
 
-    DEBUG_PRINT_LOW("Querying P layer caps\n");
+    DEBUG_PRINT_LOW("TemporalLayer: Querying P layer caps");
     if (ioctl(m_nDriver_fd, VIDIOC_QUERYCTRL, &query_ctrl)) {
-        DEBUG_PRINT_ERROR("Query control P layer caps failed\n");
+        DEBUG_PRINT_ERROR("TemporalLayer: Query control P layer caps failed");
         return false;
     }
 
@@ -6350,9 +6463,9 @@ bool venc_dev::venc_get_temporal_layer_caps(OMX_U32 *nMaxLayers,
     *nMaxLayers = query_ctrl.maximum + 1;
 
     query_ctrl.id = V4L2_CID_MPEG_VIDC_VIDEO_HIER_B_NUM_LAYERS;
-    DEBUG_PRINT_LOW("Querying B layer caps\n");
+    DEBUG_PRINT_LOW("TemporalLayer: Querying B layer caps");
     if (ioctl(m_nDriver_fd, VIDIOC_QUERYCTRL, &query_ctrl)) {
-        DEBUG_PRINT_ERROR("Query control B layer caps failed\n");
+        DEBUG_PRINT_ERROR("TemporalLayer: Query control B layer caps faile");
         return false;
     }
 
@@ -6362,177 +6475,186 @@ bool venc_dev::venc_get_temporal_layer_caps(OMX_U32 *nMaxLayers,
 
 bool venc_dev::venc_check_for_hybrid_hp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE ePattern) {
     //Hybrid HP is only for H264 and VBR
-    bool bIsAvc = (m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 &&
-                   ePattern == OMX_VIDEO_AndroidTemporalLayeringPatternAndroid);
-    bool bIsVBR = (rate_ctrl.rcmode == RC_VBR_CFR || rate_ctrl.rcmode == RC_VBR_VFR);
+    if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264) {
+        DEBUG_PRINT_LOW("TemporalLayer: Hybrid HierP is not supported for non H264");
+        return false;
+    }
 
-    return bIsAvc && bIsVBR;
+    if (ePattern != OMX_VIDEO_AndroidTemporalLayeringPatternAndroid) {
+        DEBUG_PRINT_LOW("TemporalLayer: The pattern must be Android for Hybrid HP");
+        return false;
+    }
+
+    if (rate_ctrl.rcmode != RC_VBR_CFR && rate_ctrl.rcmode != RC_VBR_VFR) {
+        DEBUG_PRINT_LOW("TemporalLayer: RC must be VBR for Hybrid");
+        return false;
+    }
+
+    return true;
 }
 
 bool venc_dev::venc_check_for_hierp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE ePattern) {
-    // If pattern is android codec should be H264/HEVC if pattern is webrtc codec should be VP8
-    bool bValidCodecAndPattern = (((m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 || m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) &&
-                                        (ePattern == OMX_VIDEO_AndroidTemporalLayeringPatternAndroid)) ||
-                                        (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8 &&
-                                        ePattern == OMX_VIDEO_AndroidTemporalLayeringPatternWebRTC));
-    // VP8 with ltr enabled cannot have layered encoding
-    bool bVP8Validation = !(m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8 && ltrinfo.enabled);
 
-    return bValidCodecAndPattern && bVP8Validation;
+    if (ePattern != OMX_VIDEO_AndroidTemporalLayeringPatternAndroid) {
+        DEBUG_PRINT_LOW("TemporalLayer: Incorrect Pattern for H264/HEVC");
+        return false;
+    }
+
+    return true;
 }
 
-OMX_ERRORTYPE venc_dev::venc_set_temporal_layers(
-        OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE *pTemporalParams) {
-    bool bUseHybridHP, bUseHierP;
+int venc_dev::venc_find_hier_type(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
+
+    enum hier_type hier;
+
+    if (venc_check_for_hybrid_hp(temporal_settings.ePattern)) {
+        hier = HIER_P_HYBRID;
+    } else if (venc_check_for_hierp(temporal_settings.ePattern)) {
+        hier = HIER_P;
+    } else {
+        hier = HIER_NONE;
+    }
+
+    if (!venc_validate_temporal_extn(temporal_settings)) {
+        hier = HIER_NONE;
+    }
+
+    return hier;
+}
+
+OMX_ERRORTYPE venc_dev::venc_set_hp(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
+
+    struct v4l2_control control;
+    OMX_U32 maxLayerCount = 0;
+
+    control.id = V4L2_CID_MPEG_VIDC_VIDEO_MAX_HIERP_LAYERS;
+    control.value = temporal_settings.nLayerCountMax - 1;
+
+    DEBUG_PRINT_LOW("TemporalLayer: Setting HP with max layers: %u num layers : %u",
+                    temporal_settings.nLayerCountMax - 1,
+                    temporal_settings.nPLayerCountActual - 1);
+
+    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to set max HP layers to %u", control.value);
+        return OMX_ErrorUnsupportedSetting;
+    }
+
+    maxLayerCount = control.value;
+
+    control.id = V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS;
+    control.value = temporal_settings.nPLayerCountActual - 1;
+    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to set hybrid hierp/hierp NumLayers : %u", control.value);
+        return OMX_ErrorUnsupportedSetting;
+    }
+
+    temporal_layers_config.ePattern     = temporal_settings.ePattern;
+    temporal_layers_config.hier_mode    = HIER_P;
+    temporal_layers_config.nPLayers     = control.value + 1;
+    temporal_layers_config.nMaxLayers   = maxLayerCount;
+    temporal_layers_config.nBLayers     = 0;
+    temporal_layers_config.nMaxBLayers  = 0;
+
+    return OMX_ErrorNone;
+}
+
+OMX_ERRORTYPE venc_dev::venc_set_hhp(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
+
     struct v4l2_control control;
 
-    // If pattern set is none it means it is a request to disable existing layer encoding
-    if(pTemporalParams->ePattern == OMX_VIDEO_AndroidTemporalLayeringPatternNone) {
-        if(temporal_layers_config.hier_mode == HIER_P_HYBRID) {
-            control.value = 0;
-            control.id = V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE;
-            if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                bUseHybridHP = false;
-                DEBUG_PRINT_ERROR("Failed to set hybrid HP. Try HierP");
-            }
-        } else if(temporal_layers_config.hier_mode == HIER_P) {
-            control.id = V4L2_CID_MPEG_VIDC_VIDEO_MAX_HIERP_LAYERS;
-            control.value = 0;
-            if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                DEBUG_PRINT_ERROR("Failed to set max HP layers to %u", control.value);
-                return OMX_ErrorUnsupportedSetting;
-            }
-            control.id = V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS;
-            control.value = 0;
-            if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                DEBUG_PRINT_ERROR("Failed to set HP layers to %u", control.value);
-                return OMX_ErrorUnsupportedSetting;
-            }
-        }
-        memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
-        return OMX_ErrorNone;
-    }
+    control.id      = V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE;
+    control.value   = temporal_settings.nPLayerCountActual - 1;
 
-    bUseHybridHP = venc_check_for_hybrid_hp(pTemporalParams->ePattern);
-    bUseHierP = venc_check_for_hierp(pTemporalParams->ePattern);
+    DEBUG_PRINT_LOW("TemporalLayer: Setting HybridHP with num layers : %u", control.value);
 
-    if(!bUseHybridHP && !bUseHierP) {
-        DEBUG_PRINT_ERROR("Invalid settings cannot support HierP/HybridHP\n");
+    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to set hybrid HP. Try HierP");
         return OMX_ErrorUnsupportedSetting;
     }
 
-    if(pTemporalParams->nBLayerCountActual) {
-        DEBUG_PRINT_ERROR("Currently there is no support for BLayers");
+    temporal_layers_config.ePattern     = temporal_settings.ePattern;
+    temporal_layers_config.hier_mode    = HIER_P_HYBRID;
+    temporal_layers_config.nPLayers     = control.value + 1;
+    temporal_layers_config.nMaxLayers   = control.value + 1;
+    temporal_layers_config.nBLayers     = 0;
+    temporal_layers_config.nMaxBLayers  = 0;
+
+    if (ltrinfo.enabled) {
+        if (!venc_set_ltrmode(0, 0)) {
+            DEBUG_PRINT_ERROR("TemporalLayer: Failed to disable LTR when HybridHP is enabled");
+            return OMX_ErrorUndefined;
+        }
+    }
+
+    return OMX_ErrorNone;
+}
+
+OMX_ERRORTYPE venc_dev::venc_disable_hhp() {
+
+    struct v4l2_control control;
+
+    control.id      = V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE;
+    control.value   = 0;
+
+    DEBUG_PRINT_LOW("TemporalLayer: Disabling HybridHP");
+
+    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to disable hybrid HP");
         return OMX_ErrorUnsupportedSetting;
     }
 
-    if(bUseHybridHP) {
-        // If LTR was enabled disable it.
-        if(ltrinfo.enabled) {
-            if(!venc_set_ltrmode(0, 0)) {
-                DEBUG_PRINT_ERROR("Failed to disable LTR when HybridHP is enabled\n");
-                return OMX_ErrorUndefined;
-            }
-        }
+    return OMX_ErrorNone;
+}
 
-        // Disable normal HP if Hybrid mode is being enabled
-        if (temporal_layers_config.hier_mode == HIER_P) {
-            control.id = V4L2_CID_MPEG_VIDC_VIDEO_MAX_HIERP_LAYERS;
-            control.value = 0;
-            if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                DEBUG_PRINT_ERROR("Failed to set max HP layers to %u", control.value);
-                return OMX_ErrorUnsupportedSetting;
-            }
-            control.id = V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS;
-            control.value = 0;
-            if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                DEBUG_PRINT_ERROR("Failed to set HP layers to %u", control.value);
-                return OMX_ErrorUnsupportedSetting;
-            }
-        }
+OMX_ERRORTYPE venc_dev::venc_disable_hp() {
 
-        // Num enhancements layers does not include the base-layer
-        control.value = pTemporalParams->nPLayerCountActual - 1;
-        control.id = V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE;
-        DEBUG_PRINT_LOW("Setting HybridHP with num layers : %u\n",control.value);
-        if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-            bUseHybridHP = false;
-            DEBUG_PRINT_ERROR("Failed to set hybrid HP. Try HierP");
-        }
-        temporal_layers_config.nMaxLayers = control.value + 1;
+    struct v4l2_control control;
+
+    control.id      = V4L2_CID_MPEG_VIDC_VIDEO_MAX_HIERP_LAYERS;
+    control.value   = 0;
+
+    DEBUG_PRINT_LOW("TemporalLayer: Disabling HP");
+
+    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to reset max HP layers to %u", control.value);
+        return OMX_ErrorUnsupportedSetting;
     }
 
-    if (!bUseHybridHP) {
-        // Disable hybrid mode if it was enabled already
-        if (temporal_layers_config.hier_mode == HIER_P_HYBRID) {
-            DEBUG_PRINT_LOW("TemporalLayer: disable hybrid HP (normal-HP preferred)");
-            control.id = V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE;
-            control.value = 0;
-            if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                DEBUG_PRINT_ERROR("Failed to disable hybrid HP !");
-                return OMX_ErrorUnsupportedSetting;
-            }
-        }
+    control.id      = V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS;
+    control.value   = 0;
 
-        // configure max layers for a session.. Use current num-layers as max
-        // if max is not set
-        control.id = V4L2_CID_MPEG_VIDC_VIDEO_MAX_HIERP_LAYERS;
-        if(pTemporalParams->nLayerCountMax > pTemporalParams->nPLayerCountActual)
-            control.value = pTemporalParams->nLayerCountMax - 1;
-        else
-            control.value = pTemporalParams->nPLayerCountActual - 1;
-
-        DEBUG_PRINT_LOW("Setting HP with max layers: %u  num layers : %u\n",control.value,
-                        pTemporalParams->nPLayerCountActual - 1);
-        temporal_layers_config.nMaxLayers = control.value + 1;
-        if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-            DEBUG_PRINT_ERROR("Failed to set max HP layers to %u", control.value);
-            return OMX_ErrorUnsupportedSetting;
-        }
-
-        control.id = V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS;
-        control.value = pTemporalParams->nPLayerCountActual - 1;
-        if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-            DEBUG_PRINT_ERROR("Failed to set hybrid hierp/hierp NumLayers : %u\n",control.value);
-            return OMX_ErrorUnsupportedSetting;
-        }
+    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to reset HP layers to %u", control.value);
+        return OMX_ErrorUnsupportedSetting;
     }
 
-    temporal_layers_config.hier_mode = bUseHybridHP ? HIER_P_HYBRID : HIER_P;
-    temporal_layers_config.nPLayers = pTemporalParams->nPLayerCountActual;
-    temporal_layers_config.nBLayers = pTemporalParams->nBLayerCountActual;
+    return OMX_ErrorNone;
+}
 
-    // Set intra period even if nBrames is previously 0
-    // This will internally calibrate gop and recalculate  and set pframe
+OMX_ERRORTYPE venc_dev::venc_set_bitrate_ratio(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
 
-    if(!venc_set_intra_period(intra_period.num_pframes, intra_period.num_bframes)) {
-        DEBUG_PRINT_ERROR("Failed to set nPframes/nBframes\n");
-        return OMX_ErrorUndefined;
-    }
+    OMX_U32 layerBitrates[OMX_VIDEO_MAX_HP_LAYERS] = {0};
+    OMX_U32 numLayers = temporal_settings.nPLayerCountActual + temporal_settings.nBLayerCountActual;
 
-    temporal_layers_config.bIsBitrateRatioValid = OMX_FALSE;
-    if (pTemporalParams->bBitrateRatiosSpecified == OMX_FALSE) {
-        DEBUG_PRINT_LOW("TemporalLayer: layerwise bitrate ratio not specified. Will use cumulative.");
+    if (temporal_settings.bBitrateRatiosSpecified == OMX_FALSE) {
+        DEBUG_PRINT_LOW("TemporalLayer: layerwise bitrate ratio not specified. Will use cumulative");
         if (!venc_set_bitrate_type(V4L2_CID_MPEG_VIDC_VIDEO_VENC_BITRATE_DISABLE)) {
             return OMX_ErrorUnsupportedSetting;
         }
         return OMX_ErrorNone;
     }
+
     DEBUG_PRINT_LOW("TemporalLayer: layerwise bitrate ratio specified");
 
-    OMX_U32 layerBitrates[OMX_VIDEO_MAX_HP_LAYERS] = {0},
-        numLayers = pTemporalParams->nPLayerCountActual + pTemporalParams->nBLayerCountActual;
-
-    OMX_U32 i = 0;
-    for (; i < numLayers; ++i) {
-        OMX_U32 previousLayersAccumulatedBitrateRatio = i == 0 ? 0 : pTemporalParams->nBitrateRatios[i-1];
-        OMX_U32 currentLayerBitrateRatio = pTemporalParams->nBitrateRatios[i] - previousLayersAccumulatedBitrateRatio;
-        if (previousLayersAccumulatedBitrateRatio > pTemporalParams->nBitrateRatios[i]) {
-            DEBUG_PRINT_ERROR("invalid bitrate ratio for layer %d.. Will fallback to cumulative", i);
+    for (OMX_U32 i = 0; i < numLayers; ++i) {
+        OMX_U32 previousLayersAccumulatedBitrateRatio = (i == 0) ? 0 : temporal_settings.nBitrateRatios[i-1];
+        OMX_U32 currentLayerBitrateRatio = temporal_settings.nBitrateRatios[i] - previousLayersAccumulatedBitrateRatio;
+        if (previousLayersAccumulatedBitrateRatio > temporal_settings.nBitrateRatios[i]) {
+            DEBUG_PRINT_ERROR("TemporalLayer: invalid bitrate ratio for layer %d.. Will fallback to cumulative", i);
             return OMX_ErrorBadParameter;
         } else {
             layerBitrates[i] = (currentLayerBitrateRatio * bitrate.target_bitrate) / 100;
-            temporal_layers_config.nTemporalLayerBitrateRatio[i] = pTemporalParams->nBitrateRatios[i];
+            temporal_layers_config.nTemporalLayerBitrateRatio[i] = temporal_settings.nBitrateRatios[i];
             temporal_layers_config.nTemporalLayerBitrateFraction[i] = currentLayerBitrateRatio;
             DEBUG_PRINT_LOW("TemporalLayer: layer[%u] ratio=%u%% bitrate=%u(of %ld)",
                     i, currentLayerBitrateRatio, layerBitrates[i], bitrate.target_bitrate);
@@ -6541,44 +6663,244 @@ OMX_ERRORTYPE venc_dev::venc_set_temporal_layers(
 
     temporal_layers_config.bIsBitrateRatioValid = OMX_TRUE;
 
-    // Setting layerwise bitrate makes sense only if target bitrate is configured, else defer until later..
+    // Setting layerwise bitrate makes sense only if target bitrate is configured, else defer until later
     if (bitrate.target_bitrate > 0) {
         if (!venc_set_layer_bitrates((OMX_U32 *)layerBitrates, numLayers)) {
-            DEBUG_PRINT_ERROR("Failed to set layer bitrate\n");
+            DEBUG_PRINT_ERROR("TemporalLayer: Failed to set layer bitrate");
             return OMX_ErrorUnsupportedSetting;
         }
     } else {
-        DEBUG_PRINT_HIGH("Defer setting layerwise bitrate since target bitrate is not yet set");
+        DEBUG_PRINT_HIGH("TemporalLayer: Defer setting layerwise bitrate since target bitrate is not yet set");
     }
 
     return OMX_ErrorNone;
 }
 
-OMX_ERRORTYPE venc_dev::venc_set_temporal_layers_internal() {
-    OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE pTemporalParams;
-    memset(&pTemporalParams, 0x0, sizeof(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE));
+bool venc_dev::venc_convert_abs2cum_bitrate(QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE *pHybrid,
+                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
 
-    if (!temporal_layers_config.nPLayers) {
-        return OMX_ErrorNone;
+    OMX_U32 cumulativeBitrate   = 0;
+    OMX_U32 cumulativeRatio     = 0;
+    OMX_U32 i = 0;
+
+    if (pHybrid == NULL) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Invalid arg %s", __func__);
+        return false;
     }
-    pTemporalParams.nLayerCountMax = temporal_layers_config.nMaxLayers;
-    pTemporalParams.nBLayerCountMax = temporal_layers_config.nMaxBLayers;
-    if(m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 || m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC)
-        pTemporalParams.ePattern = OMX_VIDEO_AndroidTemporalLayeringPatternAndroid;
-    else if(m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8)
-        pTemporalParams.ePattern = OMX_VIDEO_AndroidTemporalLayeringPatternWebRTC;
-    else
-        pTemporalParams.ePattern = OMX_VIDEO_AndroidTemporalLayeringPatternNone;
-    pTemporalParams.nPLayerCountActual = temporal_layers_config.nPLayers;
-    pTemporalParams.nBLayerCountActual = temporal_layers_config.nBLayers;
-    pTemporalParams.bBitrateRatiosSpecified = temporal_layers_config.bIsBitrateRatioValid;
+
+    DEBUG_PRINT_LOW("TemporalLayer: Converting layered bitrate to cumulative bitrate in percentage");
+
+    for (i = 0; i < temporal_settings.nPLayerCountActual; i++) {
+        cumulativeBitrate += pHybrid->nTemporalLayerBitrateRatio[i];
+    }
+
+    DEBUG_PRINT_LOW("TemporalLayer: Cumulative bitrate is: %u", cumulativeBitrate);
+    for (i = 0; i < temporal_settings.nPLayerCountActual; i++) {
+        temporal_settings.nBitrateRatios[i] = ((pHybrid->nTemporalLayerBitrateRatio[i] * 100)/cumulativeBitrate) + cumulativeRatio;
+        cumulativeRatio = temporal_settings.nBitrateRatios[i];
+        DEBUG_PRINT_LOW("TemporalLayer: Layer %u bitrate %u percent %u", i,
+            pHybrid->nTemporalLayerBitrateRatio[i], temporal_settings.nBitrateRatios[i]);
+    }
+    temporal_settings.bBitrateRatiosSpecified = OMX_TRUE;
+
+    return true;
+}
+
+bool venc_dev::venc_validate_temporal_settings() {
+
+    if (((m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den) < 60) && ((operating_rate >> 16) < 60)) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Invalid FPS/operating rate settings for Hier layers");
+        return false;
+    }
+
+    if (intra_period.num_bframes > 0) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Invalid B-frame settings for Hier layers");
+        return false;
+    }
+
+    return true;
+}
+
+bool venc_dev::venc_validate_temporal_extn(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
+
+    if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264 && m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC &&
+        temporal_settings.nPLayerCountActual > 1) {
+        DEBUG_PRINT_LOW("TemporalLayer: Layer encoding supported for H264 & HEVC");
+        return false;
+    }
+
+    if (!venc_validate_range(V4L2_CID_MPEG_VIDC_VIDEO_HIER_B_NUM_LAYERS, temporal_settings.nBLayerCountMax - 1) &&
+        (temporal_settings.nBLayerCountMax > 0)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Invalid settings, hardware doesn't"
+                    " support %u HB layers", temporal_settings.nBLayerCountMax);
+        return false;
+    }
+
+    if (!venc_validate_range(V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS, temporal_settings.nLayerCountMax - 1) &&
+        !venc_validate_range(V4L2_CID_MPEG_VIDC_VIDEO_HYBRID_HIERP_MODE, temporal_settings.nLayerCountMax - 1)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Invalid settings, hardware doesn't"
+                    " support %u temporal layers", temporal_settings.nLayerCountMax);
+        return false;
+    }
+
+    if (temporal_settings.nPLayerCountActual > temporal_settings.nLayerCountMax) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Invalid num of max layers");
+        return false;
+    }
+
+    if (temporal_settings.ePattern != OMX_VIDEO_AndroidTemporalLayeringPatternAndroid) {
+        DEBUG_PRINT_LOW("TemporalLayer: The pattern must be Android for Hybrid HP");
+        return false;
+    }
+
+    if ((streaming[CAPTURE_PORT] == true || streaming[OUTPUT_PORT] == true) && (temporal_layers_config.hier_mode == HIER_P_HYBRID)) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Cannot change Hybrid HP settings during streaming");
+        return false;
+    }
+
+    if ((streaming[CAPTURE_PORT] == true || streaming[OUTPUT_PORT] == true) &&
+        ((temporal_settings.nPLayerCountActual > temporal_layers_config.nMaxLayers) ||
+         (temporal_settings.nLayerCountMax    != temporal_layers_config.nMaxLayers))) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Invalid value for Layer count during streaming");
+        return false;
+    }
+
+    return true;
+}
+
+OMX_ERRORTYPE venc_dev::venc_set_temporal_settings(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
+
+    if (venc_find_hier_type(temporal_settings) == HIER_P) {
+
+        if (venc_disable_hhp() != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+        if (venc_set_hp(temporal_settings) != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+        if (venc_set_bitrate_ratio(temporal_settings) != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+
+
+    } else if (venc_find_hier_type(temporal_settings) == HIER_P_HYBRID) {
+
+        if (venc_disable_hp() != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+        if (venc_set_hhp(temporal_settings) != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+        if (venc_set_bitrate_ratio(temporal_settings) != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+
+    } else {
+
+        if (venc_disable_hhp() != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+        if (venc_disable_hp() != OMX_ErrorNone) {
+            return OMX_ErrorUnsupportedSetting;
+        }
+        memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
+    }
+
+    // Note HP settings could change GOP structure
+    if (!venc_set_intra_period(intra_period.num_pframes, intra_period.num_bframes)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to set nPframes/nBframes");
+        return OMX_ErrorUndefined;
+    }
+
+    return OMX_ErrorNone;
+}
+
+void venc_dev::venc_copy_temporal_settings(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalParams) {
+
+    OMX_U32 previousLayersAccumulatedBitrateRatio = 0;
+    memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
+
+    temporal_layers_config.nMaxLayers           = temporalParams.nLayerCountMax ;
+    temporal_layers_config.nMaxBLayers          = temporalParams.nBLayerCountMax ;
+    temporal_layers_config.ePattern             = temporalParams.ePattern;
+    temporal_layers_config.nPLayers             = temporalParams.nPLayerCountActual;
+    temporal_layers_config.nBLayers             = temporalParams.nBLayerCountActual;
+    temporal_layers_config.bIsBitrateRatioValid = temporalParams.bBitrateRatiosSpecified;
+
+    if (temporalParams.bBitrateRatiosSpecified == OMX_TRUE) {
+        for (OMX_U32 i = 0; i < temporalParams.nPLayerCountActual + temporalParams.nBLayerCountActual; ++i) {
+            previousLayersAccumulatedBitrateRatio = (i == 0) ? 0 : temporalParams.nBitrateRatios[i-1];
+            temporal_layers_config.nTemporalLayerBitrateRatio[i] = temporalParams.nBitrateRatios[i];
+            temporal_layers_config.nTemporalLayerBitrateFraction[i] =
+                    temporalParams.nBitrateRatios[i] - previousLayersAccumulatedBitrateRatio;
+        }
+    }
+
+    if (temporalParams.nPLayerCountActual <= 1 ||
+        temporalParams.ePattern == OMX_VIDEO_AndroidTemporalLayeringPatternNone) {
+        client_req_disable_temporal_layers = true;
+    } else {
+        client_req_disable_temporal_layers = false;
+    }
+}
+
+bool venc_dev::venc_reconfigure_temporal_settings() {
+
+    OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE temporalParams;
+    memset(&temporalParams, 0x0, sizeof(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE));
+
+    DEBUG_PRINT_HIGH("TemporalLayer: Reconfigure temporal layer settings");
+    // If client hasn't disabled temporal layers and layer count is set to zero
+    // enable two temporal layers by default only if it satisfies certain conditions
+    if (client_req_disable_temporal_layers == false && temporal_layers_config.nPLayers <= 1) {
+
+        if (!venc_validate_temporal_settings()) {
+            DEBUG_PRINT_HIGH("TemporalLayer: Cannot enable temporal layers by default");
+            return true;
+        }
+
+        temporal_layers_config.nMaxLayers           = 2;
+        temporal_layers_config.nMaxBLayers          = 0;
+        temporal_layers_config.ePattern             = OMX_VIDEO_AndroidTemporalLayeringPatternAndroid;
+        temporal_layers_config.nPLayers             = 2;
+        temporal_layers_config.nBLayers             = 0;
+        temporal_layers_config.bIsBitrateRatioValid = OMX_FALSE;
+        DEBUG_PRINT_HIGH("TemporalLayer: Enabling temporal layers = 2 by default");
+    }
+
+    temporalParams.nLayerCountMax           = temporal_layers_config.nMaxLayers;
+    temporalParams.nBLayerCountMax          = temporal_layers_config.nMaxBLayers;
+    temporalParams.ePattern                 = temporal_layers_config.ePattern;
+    temporalParams.nPLayerCountActual       = temporal_layers_config.nPLayers;
+    temporalParams.nBLayerCountActual       = temporal_layers_config.nBLayers;
+    temporalParams.bBitrateRatiosSpecified  = temporal_layers_config.bIsBitrateRatioValid;
+
     if (temporal_layers_config.bIsBitrateRatioValid == OMX_TRUE) {
         for (OMX_U32 i = 0; i < temporal_layers_config.nPLayers + temporal_layers_config.nBLayers; ++i) {
-            pTemporalParams.nBitrateRatios[i] =
+            temporalParams.nBitrateRatios[i] =
                     temporal_layers_config.nTemporalLayerBitrateRatio[i];
         }
     }
-    return venc_set_temporal_layers(&pTemporalParams);
+
+    if (venc_set_temporal_settings(temporalParams) != OMX_ErrorNone) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to set temporal settings");
+        return false;
+    }
+
+    return true;
+}
+
+bool venc_dev::venc_reconfigure_ltrmode() {
+
+    if ((ltrinfo.enabled == true) && (temporal_layers_config.hier_mode == HIER_P_HYBRID) &&
+            (temporal_layers_config.nPLayers > 1)) {
+
+        if (!venc_set_ltrmode(0, 0)) {
+            DEBUG_PRINT_ERROR("Failed to disable LTR when HybridHP is enabled");
+            return false;
+        }
+    }
+    return true;
 }
 
 bool venc_dev::venc_get_profile_level(OMX_U32 *eProfile,OMX_U32 *eLevel)

@@ -45,6 +45,7 @@ extern "C" {
 ///////////////////////////////////////////////////////////////////////////////
 #include "OMX_Core.h"
 #include "OMX_Video.h"
+#include "string.h"
 
 #define OMX_VIDEO_MAX_HP_LAYERS 6
 
@@ -634,6 +635,20 @@ enum OMX_QCOM_EXTN_INDEXTYPE
     *  and OMX_IndexParamVideoErrorCorrection (for byte based)
     */
     OMX_QcomIndexParamVideoSliceSpacing = 0x7F000074,
+
+    /* OMX.QTI.index.config.video.getdsmode */
+    OMX_QTIIndexConfigGetDSMode = 0x7F000075,
+
+    /* Capabilities */
+    OMX_QTIIndexParamCapabilitiesVTDriverVersion = 0x7F100000,
+
+    OMX_QTIIndexParamCapabilitiesMaxTemporalLayers = 0x7F100001,
+
+    OMX_QTIIndexParamCapabilitiesMaxLTR = 0x7F100002,
+
+    OMX_QTIIndexParamCapabilitiesMaxDownScaleRatio = 0x7F100003,
+
+    OMX_QTIIndexParamCapabilitiesRotationSupport = 0x7F100004,
 };
 
 /**
@@ -1386,6 +1401,35 @@ typedef enum OMX_QCOM_EXTRADATATYPE
     OMX_ExtraDataOutputCropInfo =          0x7F000014,
 } OMX_QCOM_EXTRADATATYPE;
 
+struct ExtraDataMap {
+        const char *type;
+        OMX_QCOM_EXTRADATATYPE index;
+};
+static const struct ExtraDataMap kExtradataMap[] = {
+        { "ltrinfo", OMX_ExtraDataVideoLTRInfo },
+        { "mbinfo", OMX_ExtraDataVideoEncoderMBInfo },
+        { "outputcropinfo", OMX_ExtraDataOutputCropInfo },
+};
+
+static inline OMX_S32 getIndexForExtradataType(char * type) {
+    if(type == NULL) return -1;
+    for(int i = 0; i< (int)(sizeof(kExtradataMap)/ sizeof(struct ExtraDataMap)); i++){
+        if(!strcmp(kExtradataMap[i].type,type)){
+            return kExtradataMap[i].index;
+        }
+    }
+    return -1;
+}
+
+static inline const char * getStringForExtradataType(int64_t index) {
+    for(int i = 0; i< (int)(sizeof(kExtradataMap)/sizeof(struct ExtraDataMap)); i++){
+        if(kExtradataMap[i].index == index){
+            return kExtradataMap[i].type;
+        }
+    }
+    return NULL;
+}
+
 typedef struct  OMX_STREAMINTERLACEFORMATTYPE {
     OMX_U32 nSize;
     OMX_VERSIONTYPE nVersion;
@@ -1705,6 +1749,7 @@ typedef struct QOMX_VIDEO_CUSTOM_BUFFERSIZE {
 #define OMX_QTI_INDEX_CONFIG_VIDEO_BLURINFO "OMX.QTI.index.config.BlurInfo"
 #define OMX_QTI_INDEX_PARAM_VIDEO_CLIENT_EXTRADATA "OMX.QTI.index.param.client.extradata"
 #define OMX_QTI_INDEX_CONFIG_COLOR_ASPECTS "OMX.google.android.index.describeColorAspects"
+#define OMX_QTI_INDEX_CONFIG_VIDEO_GETDSMODE "OMX.QTI.index.config.video.getdsmode"
 
 typedef enum {
     QOMX_VIDEO_FRAME_PACKING_CHECKERBOARD = 0,

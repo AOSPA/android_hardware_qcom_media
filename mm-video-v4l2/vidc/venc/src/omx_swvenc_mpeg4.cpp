@@ -71,7 +71,7 @@ omx_venc::omx_venc()
     memset(&m_debug,0,sizeof(m_debug));
 
     property_value[0] = '\0';
-    property_get("vidc.debug.level", property_value, "1");
+    property_get("vendor.vidc.debug.level", property_value, "1");
     debug_level = atoi(property_value);
 
     Platform::Config::getInt32(Platform::vidc_enc_log_in,
@@ -79,9 +79,17 @@ omx_venc::omx_venc()
     Platform::Config::getInt32(Platform::vidc_enc_log_out,
             (int32_t *)&m_debug.out_buffer_log, 0);
 
+    property_value[0] = '\0';
+    property_get("vendor.vidc.enc.log.in", property_value, "0");
+    m_debug.in_buffer_log = atoi(property_value);
+
+    property_value[0] = '\0';
+    property_get("vendor.vidc.enc.log.out", property_value, "0");
+    m_debug.out_buffer_log = atoi(property_value);
+
     snprintf(m_debug.log_loc, PROPERTY_VALUE_MAX, "%s", BUFFER_LOG_LOC);
     property_value[0] = '\0';
-    property_get("vidc.log.loc", property_value, "");
+    property_get("vendor.vidc.log.loc", property_value, "");
     if (*property_value)
     {
        strlcpy(m_debug.log_loc, property_value, PROPERTY_VALUE_MAX);
@@ -412,6 +420,7 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
 
     m_state                   = OMX_StateLoaded;
     m_sExtraData = 0;
+    m_sParamConsumerUsage     |= (OMX_U32)GRALLOC_USAGE_SW_READ_OFTEN;
 
     if (codec_type == OMX_VIDEO_CodingMPEG4)
     {
@@ -1918,6 +1927,7 @@ bool omx_venc::dev_fill_buf
     opbuffer.size = bufhdr->nAllocLen;
     opbuffer.filled_length = bufhdr->nFilledLen;
     opbuffer.flags = bufhdr->nFlags;
+    opbuffer.timestamp = bufhdr->nTimeStamp;
     opbuffer.p_client_data = (unsigned char *)bufhdr;
 
     DEBUG_PRINT_LOW("FTB: p_buffer (%p) size (%d) filled_len (%d) flags (0x%X) timestamp (%lld) clientData (%p)",
@@ -1930,7 +1940,7 @@ bool omx_venc::dev_fill_buf
 
     if ( false == m_bSeqHdrRequested)
     {
-      if (dev_get_seq_hdr(opbuffer.p_buffer, opbuffer.size, &opbuffer.filled_length) == 0)
+      if (dev_get_seq_hdr(opbuffer.p_buffer, opbuffer.size, &opbuffer.filled_length))
       {
          bufhdr->nFilledLen = opbuffer.filled_length;
          bufhdr->nOffset = 0;
@@ -1979,7 +1989,7 @@ bool omx_venc::dev_get_seq_hdr
    Ret = swvenc_getsequenceheader(m_hSwVenc, &Buffer);
    if (Ret != SWVENC_S_SUCCESS)
    {
-      DEBUG_PRINT_ERROR("%s, swvenc_flush failed (%d)",
+      DEBUG_PRINT_ERROR("%s, swvenc_getsequenceheader failed (%d)",
         __FUNCTION__, Ret);
       RETURN(false);
    }
