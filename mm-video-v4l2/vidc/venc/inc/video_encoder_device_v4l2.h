@@ -39,12 +39,10 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "VQZip.h"
 #endif
 
-#ifdef _PQ_
-#include "gpustats.h"
-#endif
 #include "omx_video_common.h"
 #include "omx_video_base.h"
 #include "omx_video_encoder.h"
+#include "vidc_common.h"
 #include <linux/videodev2.h>
 #include <media/msm_vidc.h>
 #include <poll.h>
@@ -337,6 +335,7 @@ class venc_dev
         bool venc_get_batch_size(OMX_U32 *size);
         bool venc_get_temporal_layer_caps(OMX_U32 * /*nMaxLayers*/,
                 OMX_U32 * /*nMaxBLayers*/, OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE */*SupportedPattern*/);
+        OMX_ERRORTYPE venc_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVELTYPE *profileLevelType);
         bool venc_check_for_hybrid_hp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE ePattern);
         bool venc_check_for_hierp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE ePattern);
         int venc_find_hier_type(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
@@ -383,49 +382,6 @@ class venc_dev
         venc_dev_vqzip vqzip;
 #endif
 
-#ifdef _PQ_
-        class venc_dev_pq
-        {
-            public:
-                venc_dev_pq();
-                ~venc_dev_pq();
-                bool is_pq_enabled;
-                bool is_pq_force_disable;
-                bool is_YUV_format_uncertain;
-                pthread_mutex_t lock;
-                struct extradata_buffer_info roi_extradata_info;
-                bool init(unsigned long);
-                void deinit();
-                void get_caps();
-                int configure(unsigned long width, unsigned long height);
-                bool is_pq_handle_valid();
-                bool is_color_format_supported(unsigned long);
-                bool reinit(unsigned long);
-                struct gpu_stats_lib_input_config pConfig;
-                int fill_pq_stats(struct v4l2_buffer buf, unsigned int data_offset);
-                gpu_stats_lib_caps_t caps;
-                typedef gpu_stats_lib_op_status (*gpu_stats_lib_init_t)(void**, enum perf_hint gpu_hint, enum color_compression_format format);
-                typedef gpu_stats_lib_op_status (*gpu_stats_lib_deinit_t)(void*);
-                typedef gpu_stats_lib_op_status (*gpu_stats_lib_get_caps_t)(void* handle, gpu_stats_lib_caps_t *caps);
-                typedef gpu_stats_lib_op_status (*gpu_stats_lib_configure_t)(void* handle, gpu_stats_lib_input_config *input_t);
-                typedef gpu_stats_lib_op_status (*gpu_stats_lib_fill_data_t)(void *handle, gpu_stats_lib_buffer_params_t *yuv_input,
-                        gpu_stats_lib_buffer_params_t *roi_input,
-                        gpu_stats_lib_buffer_params_t *stats_output, void *addr, void *user_data);
-            private:
-                void *mLibHandle;
-                void *mPQHandle;
-                gpu_stats_lib_init_t mPQInit;
-                gpu_stats_lib_get_caps_t mPQGetCaps;
-                gpu_stats_lib_configure_t mPQConfigure;
-                gpu_stats_lib_deinit_t mPQDeInit;
-                gpu_stats_lib_fill_data_t mPQComputeStats;
-                unsigned long configured_format;
-        };
-        venc_dev_pq m_pq;
-        bool venc_check_for_pq(void);
-        void venc_configure_pq(void);
-        void venc_try_enable_pq(void);
-#endif
         struct venc_debug_cap m_debug;
         OMX_U32 m_nDriver_fd;
         int m_poll_efd;
@@ -520,7 +476,7 @@ class venc_dev
         bool venc_set_multislice_cfg(OMX_U32 slicemode, OMX_U32 slicesize);
         bool venc_set_entropy_config(OMX_BOOL enable, OMX_U32 i_cabac_level);
         bool venc_set_inloop_filter(OMX_VIDEO_AVCLOOPFILTERTYPE loop_filter);
-        bool venc_set_intra_refresh (OMX_VIDEO_INTRAREFRESHTYPE intrarefresh, OMX_U32 irMBs);
+        bool venc_set_intra_refresh ();
         bool venc_set_error_resilience(OMX_VIDEO_PARAM_ERRORCORRECTIONTYPE* error_resilience);
         bool venc_set_voptiming_cfg(OMX_U32 nTimeIncRes);
         void venc_config_print();

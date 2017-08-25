@@ -256,6 +256,7 @@ omx_video::omx_video():
     output_use_buffer (false),
     pending_input_buffers(0),
     pending_output_buffers(0),
+    allocate_native_handle(false),
     m_out_bm_count(0),
     m_inp_bm_count(0),
     m_out_extradata_bm_count(0),
@@ -1563,11 +1564,12 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     int supportedFormats[] = {
                         [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed,
                         [1] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m,
-                        [2] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed,
-                        [3] = QOMX_COLOR_Format32bitRGBA8888Compressed,
-                        [4] = QOMX_COLOR_Format32bitRGBA8888,
-                        [5] = QOMX_COLOR_FormatAndroidOpaque,
-                        [6] = OMX_COLOR_FormatYUV420SemiPlanar,
+                        [2] = QOMX_COLOR_FormatYVU420SemiPlanar,
+                        [3] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed,
+                        [4] = QOMX_COLOR_Format32bitRGBA8888Compressed,
+                        [5] = QOMX_COLOR_Format32bitRGBA8888,
+                        [6] = QOMX_COLOR_FormatAndroidOpaque,
+                        [7] = OMX_COLOR_FormatYUV420SemiPlanar,
                     };
 #else
                     //we support two formats
@@ -1577,8 +1579,9 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     //this can be extended in the future
                     int supportedFormats[] = {
                         [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m,
-                        [1] = QOMX_COLOR_FormatAndroidOpaque,
-                        [2] = OMX_COLOR_FormatYUV420SemiPlanar,
+                        [1] = QOMX_COLOR_FormatYVU420SemiPlanar,
+                        [2] = QOMX_COLOR_FormatAndroidOpaque,
+                        [3] = OMX_COLOR_FormatYUV420SemiPlanar,
                     };
 #endif
                     if (index > (sizeof(supportedFormats)/sizeof(*supportedFormats) - 1))
@@ -1656,7 +1659,7 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_PROFILELEVELTYPE);
                 OMX_VIDEO_PARAM_PROFILELEVELTYPE* pParam = (OMX_VIDEO_PARAM_PROFILELEVELTYPE*)paramData;
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported");
-                eRet = get_supported_profile_level(pParam);
+                eRet = dev_get_supported_profile_level(pParam);
                 if (eRet && eRet != OMX_ErrorNoMore)
                     DEBUG_PRINT_ERROR("Invalid entry returned from get_supported_profile_level %u, %u",
                             (unsigned int)pParam->eProfile, (unsigned int)pParam->eLevel);
@@ -3039,24 +3042,23 @@ OMX_ERRORTYPE omx_video::free_output_buffer(OMX_BUFFERHEADERTYPE *bufferHdr)
             if(!secure_session) {
                 munmap (m_pOutput_pmem[index].buffer,
                         m_pOutput_pmem[index].size);
-            } else {
+                close (m_pOutput_pmem[index].fd);
+            } else if (m_pOutput_pmem[index].buffer) {
+                native_handle_t *handle;
                 if (allocate_native_handle) {
-                    native_handle_t *handle = NULL;
                     handle = (native_handle_t *)m_pOutput_pmem[index].buffer;
-                    native_handle_close(handle);
-                    native_handle_delete(handle);
                 } else {
-                    char *data = (char*) m_pOutput_pmem[index].buffer;
-                    native_handle_t *handle = NULL;
-                    memcpy(&handle, data + sizeof(OMX_U32), sizeof(native_handle_t*));
-                    native_handle_delete(handle);
+                    handle = ((output_metabuffer *)m_pOutput_pmem[index].buffer)->nh;
                     free(m_pOutput_pmem[index].buffer);
                 }
+                native_handle_close(handle);
+                native_handle_delete(handle);
             }
-            close (m_pOutput_pmem[index].fd);
 #ifdef USE_ION
             free_ion_memory(&m_pOutput_ion[index]);
 #endif
+
+            m_pOutput_pmem[index].buffer = NULL;
             m_pOutput_pmem[index].fd = -1;
         } else if ( m_pOutput_pmem[index].fd > 0 && (output_use_buffer == true
                     && m_use_output_pmem == OMX_FALSE)) {
@@ -4127,11 +4129,15 @@ OMX_ERRORTYPE  omx_video::set_callbacks(OMX_IN OMX_HANDLETYPE        hComp,
         OMX_IN OMX_PTR             appData)
 {
     (void)hComp;
+
+    if (!callbacks)
+       return OMX_ErrorBadParameter;
+
     m_pCallbacks       = *callbacks;
     DEBUG_PRINT_LOW("Callbacks Set %p %p %p",m_pCallbacks.EmptyBufferDone,\
             m_pCallbacks.EventHandler,m_pCallbacks.FillBufferDone);
     m_app_data =    appData;
-    return OMX_ErrorNotImplemented;
+    return OMX_ErrorNone;
 }
 
 
@@ -4510,7 +4516,7 @@ OMX_ERRORTYPE omx_video::fill_buffer_done(OMX_HANDLETYPE hComp,
             m_fbd_count++;
 
             if (dev_get_output_log_flag()) {
-                dev_output_log_buffers((const char*)buffer->pBuffer, buffer->nFilledLen);
+                dev_output_log_buffers((const char*)buffer->pBuffer + buffer->nOffset, buffer->nFilledLen);
             }
         }
         if (buffer->nFlags & OMX_BUFFERFLAG_EXTRADATA) {
@@ -4633,87 +4639,6 @@ void omx_video::complete_pending_buffer_done_cbs()
                 break;
         }
     }
-}
-
-OMX_ERRORTYPE omx_video::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVELTYPE *profileLevelType)
-{
-    OMX_ERRORTYPE eRet = OMX_ErrorNone;
-    if (!profileLevelType)
-        return OMX_ErrorBadParameter;
-
-    if (profileLevelType->nPortIndex == 1) {
-        if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingAVC) {
-            if (profileLevelType->nProfileIndex == 0) {
-                profileLevelType->eProfile = OMX_VIDEO_AVCProfileBaseline;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
-            } else if (profileLevelType->nProfileIndex == 1) {
-                profileLevelType->eProfile = OMX_VIDEO_AVCProfileMain;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
-            } else if (profileLevelType->nProfileIndex == 2) {
-                profileLevelType->eProfile = OMX_VIDEO_AVCProfileHigh;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
-            } else if (profileLevelType->nProfileIndex == 3) {
-                profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedBaseline;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
-            } else if (profileLevelType->nProfileIndex == 4) {
-                profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedHigh;
-                profileLevelType->eLevel   = OMX_VIDEO_AVCLevel52;
-            } else {
-                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u",
-                        (unsigned int)profileLevelType->nProfileIndex);
-                eRet = OMX_ErrorNoMore;
-            }
-        } else if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingH263) {
-            if (profileLevelType->nProfileIndex == 0) {
-                profileLevelType->eProfile = OMX_VIDEO_H263ProfileBaseline;
-                profileLevelType->eLevel   = OMX_VIDEO_H263Level70;
-            } else {
-                DEBUG_PRINT_ERROR("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u", (unsigned int)profileLevelType->nProfileIndex);
-                eRet = OMX_ErrorNoMore;
-            }
-        } else if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingMPEG4) {
-            if (profileLevelType->nProfileIndex == 0) {
-                profileLevelType->eProfile = OMX_VIDEO_MPEG4ProfileSimple;
-                profileLevelType->eLevel   = OMX_VIDEO_MPEG4Level5;
-            } else if (profileLevelType->nProfileIndex == 1) {
-                profileLevelType->eProfile = OMX_VIDEO_MPEG4ProfileAdvancedSimple;
-                profileLevelType->eLevel   = OMX_VIDEO_MPEG4Level5;
-            } else {
-                DEBUG_PRINT_ERROR("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u", (unsigned int)profileLevelType->nProfileIndex);
-                eRet = OMX_ErrorNoMore;
-            }
-        } else if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingVP8) {
-            if (profileLevelType->nProfileIndex == 0) {
-                profileLevelType->eProfile = OMX_VIDEO_VP8ProfileMain;
-                profileLevelType->eLevel   = OMX_VIDEO_VP8Level_Version0;
-            } else if (profileLevelType->nProfileIndex == 1) {
-                profileLevelType->eProfile = OMX_VIDEO_VP8ProfileMain;
-                profileLevelType->eLevel   = OMX_VIDEO_VP8Level_Version1;
-            } else {
-                DEBUG_PRINT_LOW("VP8: get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u",
-                (unsigned int)profileLevelType->nProfileIndex);
-                eRet = OMX_ErrorNoMore;
-            }
-        } else if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingHEVC) {
-            if (profileLevelType->nProfileIndex == 0) {
-                profileLevelType->eProfile =  OMX_VIDEO_HEVCProfileMain;
-                profileLevelType->eLevel   =  OMX_VIDEO_HEVCMainTierLevel51;
-            } else {
-                DEBUG_PRINT_LOW("HEVC: get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u",
-                (unsigned int)profileLevelType->nProfileIndex);
-                eRet = OMX_ErrorNoMore;
-            }
-        } else {
-            DEBUG_PRINT_ERROR("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported ret NoMore");
-            eRet = OMX_ErrorNoMore;
-        }
-    } else {
-        DEBUG_PRINT_ERROR("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported should be queried on Input port only %u", (unsigned int)profileLevelType->nPortIndex);
-        eRet = OMX_ErrorBadPortIndex;
-    }
-    DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported for Input port returned Profile:%u, Level:%u",
-            (unsigned int)profileLevelType->eProfile, (unsigned int)profileLevelType->eLevel);
-    return eRet;
 }
 
 #ifdef USE_ION
