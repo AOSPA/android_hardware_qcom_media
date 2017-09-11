@@ -279,6 +279,7 @@ class omx_video: public qc_omx_component
         virtual bool dev_empty_buf(void *, void *,unsigned,unsigned) = 0;
         virtual bool dev_fill_buf(void *buffer, void *,unsigned,unsigned) = 0;
         virtual bool dev_get_buf_req(OMX_U32 *,OMX_U32 *,OMX_U32 *,OMX_U32) = 0;
+        virtual bool is_streamon_done(OMX_U32 port) = 0;
         virtual bool dev_get_seq_hdr(void *, unsigned, unsigned *) = 0;
         virtual bool dev_loaded_start(void) = 0;
         virtual bool dev_loaded_stop(void) = 0;
@@ -305,6 +306,7 @@ class omx_video: public qc_omx_component
         virtual bool dev_get_output_log_flag() = 0;
         virtual int dev_output_log_buffers(const char *buffer_addr, int buffer_len) = 0;
         virtual int dev_extradata_log_buffers(char *buffer_addr) = 0;
+        virtual bool dev_get_hevc_profile(OMX_U32*) = 0;
         OMX_ERRORTYPE component_role_enum(
                 OMX_HANDLETYPE hComp,
                 OMX_U8 *role,
@@ -400,6 +402,10 @@ class omx_video: public qc_omx_component
                 void *               eglImage);
 
         Signal signal;
+
+        bool reject_param_for_TME_mode(int index);
+        bool reject_config_for_TME_mode(int index);
+
         pthread_t msg_thread_id;
         pthread_t async_thread_id;
         bool async_thread_created;
@@ -570,8 +576,7 @@ class omx_video: public qc_omx_component
         OMX_ERRORTYPE convert_queue_buffer(OMX_HANDLETYPE hComp,
                 struct pmem &Input_pmem_info,unsigned long &index);
         OMX_ERRORTYPE queue_meta_buffer(OMX_HANDLETYPE hComp);
-        OMX_ERRORTYPE push_empty_eos_buffer(OMX_HANDLETYPE hComp,
-                OMX_BUFFERHEADERTYPE *buffer);
+        OMX_ERRORTYPE push_empty_eos_buffer(OMX_HANDLETYPE hComp);
         OMX_ERRORTYPE fill_this_buffer_proxy(OMX_HANDLETYPE hComp,
                 OMX_BUFFERHEADERTYPE *buffer);
         bool release_done();
@@ -670,6 +675,8 @@ class omx_video: public qc_omx_component
         OMX_VIDEO_PARAM_AVCTYPE m_sParamAVC;
         OMX_VIDEO_PARAM_VP8TYPE m_sParamVP8;
         OMX_VIDEO_PARAM_HEVCTYPE m_sParamHEVC;
+        QOMX_VIDEO_PARAM_TMETYPE m_sParamTME;
+        OMX_U32 tme_payload_version;
         OMX_PORT_PARAM_TYPE m_sPortParam_img;
         OMX_PORT_PARAM_TYPE m_sPortParam_audio;
         OMX_VIDEO_CONFIG_BITRATETYPE m_sConfigBitrate;
