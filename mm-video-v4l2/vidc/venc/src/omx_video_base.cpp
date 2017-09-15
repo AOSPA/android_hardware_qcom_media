@@ -1573,11 +1573,23 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             &m_sOutPortDef.nBufferCountActual,
                             &m_sOutPortDef.nBufferSize,
                             m_sOutPortDef.nPortIndex);
+                        dev_get_dimensions(m_sOutPortDef.nPortIndex,
+                            &m_sOutPortDef.format.video.nFrameWidth,
+                            &m_sOutPortDef.format.video.nFrameHeight);
                     }
-                    DEBUG_PRINT_LOW("m_sOutPortDef: size = %u, min cnt = %u, actual cnt = %u",
+                    DEBUG_PRINT_LOW("m_sOutPortDef: size = %u, min cnt = %u, actual cnt = %u"
+                                    " updated dimensions = %u x %u",
                             (unsigned int)m_sOutPortDef.nBufferSize, (unsigned int)m_sOutPortDef.nBufferCountMin,
-                            (unsigned int)m_sOutPortDef.nBufferCountActual);
+                            (unsigned int)m_sOutPortDef.nBufferCountActual,
+                            m_sOutPortDef.format.video.nFrameWidth,
+                            m_sOutPortDef.format.video.nFrameHeight);
+
                     memcpy(portDefn, &m_sOutPortDef, sizeof(m_sOutPortDef));
+
+                    if (secure_session || allocate_native_handle) {
+                        portDefn->nBufferSize =
+                                sizeof(native_handle_t) + (sizeof(int) * (1/*numFds*/ + 3/*numInts*/));
+                    }
                 } else {
                     DEBUG_PRINT_ERROR("ERROR: GetParameter called on Bad Port Index");
                     eRet = OMX_ErrorBadPortIndex;

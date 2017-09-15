@@ -93,11 +93,6 @@ void omx_venc::perf_control::send_hint_to_mpctl(bool state)
 
 bool omx_venc::perf_control::load_lib()
 {
-
-#ifndef PERF_ENABLE
-    return false;
-#endif
-
     char perf_lib_path[PROPERTY_VALUE_MAX] = {0};
     if (m_perf_lib)
         return true;
@@ -2628,6 +2623,15 @@ bool omx_venc::dev_get_buf_req(OMX_U32 *min_buff_count,
             buff_size,
             port);
 
+}
+
+bool omx_venc::dev_get_dimensions(OMX_U32 port,
+        OMX_U32 *width,
+        OMX_U32 *height)
+{
+    return handle->venc_get_dimensions(port,
+            width,
+            height);
 }
 
 bool omx_venc::dev_set_buf_req(OMX_U32 *min_buff_count,
