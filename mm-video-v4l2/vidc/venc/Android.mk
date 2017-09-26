@@ -55,15 +55,15 @@ libmm-venc-def += -DUSE_CAMERA_METABUFFER_UTILS
 
 # Common Includes
 libmm-venc-inc      := $(LOCAL_PATH)/inc
-libmm-venc-inc      += $(TOP)/system/core/libion/include
+libmm-venc-inc      += $(TOP)/core/libion/include
 libmm-venc-inc      += $(TOP)/system/core/libion/kernel-headers
-libmm-venc-inc      += $(TOP)/hardware/qcom/media/mm-video-v4l2/vidc/common/inc
-libmm-venc-inc      += hardware/qcom/media/mm-core/inc
-libmm-venc-inc      += hardware/qcom/media/libstagefrighthw
-libmm-venc-inc      += hardware/qcom/media/libplatformconfig
+libmm-venc-inc      += $(QCOM_MEDIA_ROOT)/mm-video-v4l2/vidc/common/inc
+libmm-venc-inc      += $(QCOM_MEDIA_ROOT)/mm-core/inc
+libmm-venc-inc      += $(QCOM_MEDIA_ROOT)/libstagefrighthw
+libmm-venc-inc      += $(QCOM_MEDIA_ROOT)/libplatformconfig
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/qcom/display
+libmm-venc-inc      += $(QCOM_MEDIA_ROOT)/libc2dcolorconvert
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/adreno
-libmm-venc-inc      += hardware/qcom/media/libc2dcolorconvert
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/libvqzip
 libmm-venc-inc      += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
 libmm-venc-inc      += $(TOP)/frameworks/native/libs/nativewindow/include
@@ -100,6 +100,7 @@ LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-venc-add-dep)
 
 LOCAL_PRELINK_MODULE      := false
 LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl libplatformconfig libion
+LOCAL_SHARED_LIBRARIES    += libnativewindow
 
 # ifeq ($(BOARD_USES_ADRENO), true)
 LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
@@ -141,6 +142,7 @@ LOCAL_PRELINK_MODULE      := false
 LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl libplatformconfig libion
 LOCAL_SHARED_LIBRARIES    += libMpeg4SwEncoder
 LOCAL_SHARED_LIBRARIES    += libqdMetaData
+LOCAL_SHARED_LIBRARIES    += libnativewindow
 
 ifneq ($(call is-board-platform-in-list, $(TARGETS_THAT_DONT_SUPPORT_SW_VENC_ROTATION)),true)
 LOCAL_SHARED_LIBRARIES += libui
