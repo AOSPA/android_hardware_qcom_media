@@ -271,7 +271,7 @@ omx_core_cb_type core[] =
     NULL,   // Shared object library handle
     "libOmxAmrDec.so",
     {
-      "audio_decoder.amrnb"
+      "audio_decoder.amr"
     }
   },
   {
@@ -284,7 +284,7 @@ omx_core_cb_type core[] =
     NULL,   // Shared object library handle
     "libOmxAmrDec.so",
     {
-      "audio_decoder.amrwb"
+      "audio_decoder.amr"
     }
   },
   {
@@ -300,7 +300,7 @@ omx_core_cb_type core[] =
       "video_encoder.mpeg4"
     }
   },
-   {
+  {
     "OMX.qcom.video.encoder.h263",
     NULL, // Create instance function
     // Unique instance handle
@@ -313,7 +313,7 @@ omx_core_cb_type core[] =
       "video_encoder.h263"
     }
   },
-   {
+  {
     "OMX.qcom.video.encoder.avc",
     NULL, // Create instance function
     // Unique instance handle
@@ -326,20 +326,7 @@ omx_core_cb_type core[] =
       "video_encoder.avc"
     }
   },
-   {
-    "OMX.qcom.video.encoder.avc.secure",
-    NULL, // Create instance function
-    // Unique instance handle
-    {
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxVenc.so",
-    {
-      "video_encoder.avc"
-    }
-  },
-{
+  {
     "OMX.qcom.video.encoder.vp8",
     NULL, // Create instance function
     // Unique instance handle
@@ -350,19 +337,6 @@ omx_core_cb_type core[] =
     "libOmxVenc.so",
     {
       "video_encoder.vp8"
-    }
-  },
-  {
-    "OMX.qti.video.encoder.hevc",
-    NULL,   // Create instance function
-    // Unique instance handle
-    {
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxSwVencHevc.so",
-    {
-      "video_encoder.hevc"
     }
   },
   {
@@ -473,32 +447,6 @@ omx_core_cb_type core[] =
     }
   },
   {
-    "OMX.qcom.audio.decoder.g711mlaw",
-    NULL,   // Create instance function
-    // Unique instance handle
-    {
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxG711Dec.so",
-    {
-      "audio_decoder.g711"
-    }
-  },
-  {
-    "OMX.qcom.audio.decoder.g711alaw",
-    NULL,   // Create instance function
-    // Unique instance handle
-    {
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxG711Dec.so",
-    {
-      "audio_decoder.g711"
-    }
-  },
-  {
     "OMX.qti.audio.decoder.alac.sw",
     NULL,   // Create instance function
     // Unique instance handle
@@ -544,22 +492,6 @@ omx_core_cb_type core[] =
     "libOmxApeDecSw.so",
     {
       "audio_decoder.ape"
-    }
-  },
-  {
-    "OMX.qti.audio.decoder.flac.sw",
-    NULL,   // Create instance function
-    // Unique instance handle
-    {
-      NULL,
-      NULL,
-      NULL,
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxFlacDecSw.so",
-    {
-      "audio_decoder.flac"
     }
   },
   {
@@ -628,51 +560,6 @@ omx_core_cb_type core[] =
     }
   },
   {
-    "OMX.qcom.audio.encoder.g711mlaw",
-    NULL,   // Create instance function
-    // Unique instance handle
-    {
-      NULL,
-      NULL,
-      NULL,
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxG711Enc.so",
-    {
-      "audio_encoder.g711"
-    }
-  },
-  {
-    "OMX.qcom.audio.encoder.g711alaw",
-    NULL,   // Create instance function
-    // Unique instance handle
-    {
-      NULL,
-      NULL,
-      NULL,
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxG711Enc.so",
-    {
-      "audio_encoder.g711"
-    }
-  },
-  {
-    "OMX.qcom.file.muxer",
-    NULL,   // Create instance function
-    // Unique instance handle
-    {
-      NULL
-    },
-    NULL,   // Shared object library handle
-    "libOmxMux.so",
-    {
-      "container_muxer.mp4"
-    }
-  },
-  {
     "OMX.QCOM.CUST.COMP.START",
     NULL, //Create instance function
     //Unique instance handle
@@ -699,6 +586,19 @@ omx_core_cb_type core[] =
     "libOmxMux.so",
     {
       "container_muxer.mp2"
+    }
+  },
+  {
+    "OMX.qcom.file.muxer",
+    NULL,   // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxMux.so",
+    {
+      "container_muxer.mp4"
     }
   },
   {
@@ -752,6 +652,32 @@ omx_core_cb_type core[] =
     {
       "video_encoder.hevc"
     }
+  },
+  {
+    "OMX.qti.video.encoder.hevc",
+    NULL,   // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxSwVencHevc.so",
+    {
+      "video_encoder.hevc"
+    }
+  },
+  {
+     "OMX.qcom.video.encoder.avc.secure",
+      NULL, // Create instance function
+      // Unique instance handle
+      {
+        NULL
+      },
+      NULL,   // Shared object library handle
+      "libOmxVenc.so",
+      {
+        "video_encoder.avc"
+      }
   },
   {
     "OMX.qti.vdec.vpp",
