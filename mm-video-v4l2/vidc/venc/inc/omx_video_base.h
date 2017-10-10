@@ -298,6 +298,7 @@ class omx_video: public qc_omx_component
         virtual bool dev_get_temporal_layer_caps(OMX_U32 * /*nMaxLayers*/,
                 OMX_U32 * /*nMaxBLayers*/, OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE */*SupportedPattern*/) = 0;
         virtual OMX_ERRORTYPE dev_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVELTYPE *) = 0;
+        virtual bool dev_get_supported_color_format(unsigned index, OMX_U32 *colorFormat) = 0;
 #ifdef _ANDROID_ICS_
         void omx_release_meta_buffer(OMX_BUFFERHEADERTYPE *buffer);
 #endif
@@ -686,6 +687,7 @@ class omx_video: public qc_omx_component
         OMX_PARAM_BUFFERSUPPLIERTYPE m_sInBufSupplier;
         OMX_PARAM_BUFFERSUPPLIERTYPE m_sOutBufSupplier;
         OMX_CONFIG_ROTATIONTYPE m_sConfigFrameRotation;
+        OMX_CONFIG_MIRRORTYPE m_sConfigFrameMirror;
         OMX_CONFIG_INTRAREFRESHVOPTYPE m_sConfigIntraRefreshVOP;
         OMX_U32 m_QPSet;
         OMX_VIDEO_PARAM_QUANTIZATIONTYPE m_sSessionQuantization;
@@ -727,6 +729,7 @@ class omx_video: public qc_omx_component
         QOMX_ENABLETYPE m_sParamControlInputQueue;
         OMX_TIME_CONFIG_TIMESTAMPTYPE m_sConfigInputTrigTS;
         QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE m_sParamLowLatency;
+        OMX_U32 m_nOperatingRate;
 
         // fill this buffer queue
         omx_cmd_queue m_ftb_q;

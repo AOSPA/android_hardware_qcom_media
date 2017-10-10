@@ -195,6 +195,10 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sConfigFrameRotation.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
     m_sConfigFrameRotation.nRotation = 0;
 
+    OMX_INIT_STRUCT(&m_sConfigFrameMirror, OMX_CONFIG_MIRRORTYPE);
+    m_sConfigFrameMirror.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
+    m_sConfigFrameMirror.eMirror = OMX_MirrorNone;
+
     OMX_INIT_STRUCT(&m_sConfigAVCIDRPeriod, OMX_VIDEO_CONFIG_AVCINTRAPERIOD);
     m_sConfigAVCIDRPeriod.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
 
@@ -1739,7 +1743,23 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
 
                 break;
             }
-        case OMX_IndexConfigCommonRotate:
+        case OMX_IndexConfigCommonMirror:
+            {
+                VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_MIRRORTYPE);
+                OMX_CONFIG_MIRRORTYPE *pParam = reinterpret_cast<OMX_CONFIG_MIRRORTYPE*>(configData);
+
+                if (pParam->nPortIndex != PORT_INDEX_OUT) {
+                   DEBUG_PRINT_ERROR("ERROR: Unsupported port index: %u", (unsigned int)pParam->nPortIndex);
+                   return OMX_ErrorBadPortIndex;
+                }
+                if (handle->venc_set_config(configData,OMX_IndexConfigCommonMirror) != true) {
+                       DEBUG_PRINT_ERROR("ERROR: Set OMX_IndexConfigCommonMirror failed");
+                       return OMX_ErrorUnsupportedSetting;
+                }
+                m_sConfigFrameMirror.eMirror = pParam->eMirror;
+                break;
+            }
+       case OMX_IndexConfigCommonRotate:
             {
                 VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_ROTATIONTYPE);
                 OMX_CONFIG_ROTATIONTYPE *pParam =
@@ -1897,11 +1917,13 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
         case OMX_IndexConfigOperatingRate:
             {
                 VALIDATE_OMX_PARAM_DATA(configData, OMX_PARAM_U32TYPE);
+                OMX_PARAM_U32TYPE* pParam = (OMX_PARAM_U32TYPE*) configData;
                 if (!handle->venc_set_config(configData, (OMX_INDEXTYPE)OMX_IndexConfigOperatingRate)) {
-                    DEBUG_PRINT_ERROR("Failed to set OMX_IndexConfigOperatingRate");
+                    DEBUG_PRINT_ERROR("Failed to set OMX_IndexConfigOperatingRate %u", pParam->nU32 >> 16);
                     return handle->hw_overload ? OMX_ErrorInsufficientResources :
                             OMX_ErrorUnsupportedSetting;
                 }
+                m_nOperatingRate = pParam->nU32;
                 break;
             }
         case OMX_QTIIndexConfigVideoRoiInfo:
@@ -2234,6 +2256,10 @@ bool omx_venc::dev_get_temporal_layer_caps(OMX_U32 *nMaxLayers,
 OMX_ERRORTYPE omx_venc::dev_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVELTYPE *profileLevelType)
 {
     return handle->venc_get_supported_profile_level(profileLevelType);
+}
+
+bool omx_venc::dev_get_supported_color_format(unsigned index, OMX_U32 *colorFormat) {
+    return handle->venc_get_supported_color_format(index, colorFormat);
 }
 
 bool omx_venc::dev_loaded_start()

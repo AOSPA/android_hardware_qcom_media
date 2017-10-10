@@ -107,6 +107,9 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #endif
 
+// Gralloc flag to indicate UBWC
+#define GRALLOC1_CONSUMER_USAGE_UBWC_FLAG GRALLOC1_CONSUMER_USAGE_PRIVATE_0
+
 typedef struct OMXComponentCapabilityFlagsType {
     ////////////////// OMX COMPONENT CAPABILITY RELATED MEMBERS
     OMX_U32 nSize;
@@ -1611,46 +1614,13 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
 
                 if (portFmt->nPortIndex == (OMX_U32) PORT_INDEX_IN) {
                     unsigned index = portFmt->nIndex;
-
-#ifdef _UBWC_
-                    //we support following formats
-                    //index 0 - Compressed (UBWC) Venus flavour of YUV420SP
-                    //index 1 - Venus flavour of YUV420SP
-                    //index 2 - Compressed (UBWC) TP10 (10bit packed)
-                    //index 3 - Compressed (UBWC) Venus flavour of RGBA8888
-                    //index 4 - Venus flavour of RGBA8888
-                    //index 5 - opaque which internally maps to YUV420SP.
-                    //index 6 - vannilla YUV420SP
-                    //this can be extended in the future
-                    int supportedFormats[] = {
-                        [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed,
-                        [1] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m,
-                        [2] = QOMX_COLOR_FormatYVU420SemiPlanar,
-                        [3] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed,
-                        [4] = QOMX_COLOR_Format32bitRGBA8888Compressed,
-                        [5] = QOMX_COLOR_Format32bitRGBA8888,
-                        [6] = QOMX_COLOR_FormatAndroidOpaque,
-                        [7] = OMX_COLOR_FormatYUV420SemiPlanar,
-                    };
-#else
-                    //we support two formats
-                    //index 0 - Venus flavour of YUV420SP
-                    //index 1 - opaque which internally maps to YUV420SP.
-                    //index 2 - vannilla YUV420SP
-                    //this can be extended in the future
-                    int supportedFormats[] = {
-                        [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m,
-                        [1] = QOMX_COLOR_FormatYVU420SemiPlanar,
-                        [2] = QOMX_COLOR_FormatAndroidOpaque,
-                        [3] = OMX_COLOR_FormatYUV420SemiPlanar,
-                    };
-#endif
-                    if (index > (sizeof(supportedFormats)/sizeof(*supportedFormats) - 1))
-                        eRet = OMX_ErrorNoMore;
-                    else {
+                    OMX_U32 colorFormat = OMX_COLOR_FormatUnused;
+                    if(dev_get_supported_color_format(index, &colorFormat)) {
                         memcpy(portFmt, &m_sInPortFormat, sizeof(m_sInPortFormat));
                         portFmt->nIndex = index; //restore index set from client
-                        portFmt->eColorFormat = (OMX_COLOR_FORMATTYPE)supportedFormats[index];
+                        portFmt->eColorFormat = (OMX_COLOR_FORMATTYPE)colorFormat;
+                    } else {
+                        eRet = OMX_ErrorNoMore;
                     }
                 } else if (portFmt->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
                     memcpy(portFmt, &m_sOutPortFormat, sizeof(m_sOutPortFormat));
@@ -2125,6 +2095,7 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 if(hevc && eProfile == (OMX_U32)OMX_VIDEO_HEVCProfileMain10) {
                     DEBUG_PRINT_INFO("Setting TP10 consumer usage bits");
                     m_sParamConsumerUsage |= GRALLOC1_CONSUMER_USAGE_PRIVATE_10BIT_TP;
+                    m_sParamConsumerUsage |= GRALLOC1_CONSUMER_USAGE_UBWC_FLAG;
                 }
                 memcpy(consumerUsage, &m_sParamConsumerUsage, sizeof(m_sParamConsumerUsage));
                 break;
@@ -2207,6 +2178,13 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                 memcpy(pParam, &m_sConfigFrameRotation, sizeof(m_sConfigFrameRotation));
                 break;
             }
+        case OMX_IndexConfigCommonMirror:
+            {
+                VALIDATE_OMX_PARAM_DATA(configData, OMX_CONFIG_MIRRORTYPE);
+                OMX_CONFIG_MIRRORTYPE* pParam = reinterpret_cast<OMX_CONFIG_MIRRORTYPE*>(configData);
+                memcpy(pParam, &m_sConfigFrameMirror, sizeof(m_sConfigFrameMirror));
+                break;
+            }
         case QOMX_IndexConfigVideoIntraperiod:
             {
                 DEBUG_PRINT_LOW("get_config:QOMX_IndexConfigVideoIntraperiod");
@@ -2276,6 +2254,15 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                    reinterpret_cast<OMX_VIDEO_CONFIG_ANDROID_INTRAREFRESHTYPE*>(configData);
                DEBUG_PRINT_LOW("get_config: OMX_IndexConfigAndroidIntraRefresh");
                memcpy(pParam, &m_sConfigIntraRefresh, sizeof(m_sConfigIntraRefresh));
+               break;
+           }
+        case OMX_IndexConfigOperatingRate:
+           {
+               VALIDATE_OMX_PARAM_DATA(configData, OMX_PARAM_U32TYPE);
+               OMX_PARAM_U32TYPE* pParam =
+                   reinterpret_cast<OMX_PARAM_U32TYPE*>(configData);
+               DEBUG_PRINT_LOW("get_config: OMX_IndexConfigOperatingRate");
+               pParam->nU32 = m_nOperatingRate;
                break;
            }
        case OMX_QTIIndexConfigVideoBlurResolution:
