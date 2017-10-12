@@ -299,6 +299,7 @@ class venc_dev
         void venc_close();
         unsigned venc_stop(void);
         unsigned venc_pause(void);
+        bool is_streamon_done(OMX_U32 port);
         unsigned venc_start(void);
         unsigned venc_flush(unsigned);
 #ifdef _ANDROID_ICS_
@@ -356,6 +357,7 @@ class venc_dev
                         unsigned long inputformat);
         int venc_extradata_log_buffers(char *buffer_addr);
         bool venc_set_bitrate_type(OMX_U32 type);
+        bool venc_get_hevc_profile(OMX_U32* profile);
 
 #ifdef _VQZIP_
         class venc_dev_vqzip
@@ -421,7 +423,7 @@ class venc_dev
         bool hw_overload;
         bool is_gralloc_source_ubwc;
         bool is_camera_source_ubwc;
-        bool is_csc_enabled;
+        bool is_csc_custom_matrix_enabled;
         OMX_U32 fd_list[64];
 
     private:

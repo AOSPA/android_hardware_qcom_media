@@ -1445,6 +1445,61 @@ bool omx_video::post_event(unsigned long p1,
     return bRet;
 }
 
+bool omx_video::reject_param_for_TME_mode(int index) {
+    int allowed_params[] = {
+        OMX_IndexParamPortDefinition,
+        OMX_IndexParamVideoPortFormat,
+        OMX_IndexParamVideoInit,
+        OMX_IndexParamAudioInit,
+        OMX_IndexParamImageInit,
+        OMX_IndexParamOtherInit,
+        OMX_IndexParamStandardComponentRole,
+        OMX_IndexParamPriorityMgmt,
+        OMX_IndexParamCompBufferSupplier,
+        OMX_GoogleAndroidIndexAllocateNativeHandle,
+        OMX_QcomIndexPortDefn,
+        OMX_QcomIndexParamVideoMetaBufferMode,
+        OMX_QTIIndexParamLowLatencyMode,
+        OMX_IndexParamVideoTme,
+        OMX_IndexParamVideoProfileLevelQuerySupported,
+        OMX_IndexParamConsumerUsageBits
+    };
+
+    if (m_sOutPortFormat.eCompressionFormat != (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME) {
+        return false;
+    }
+
+    for (unsigned i = 0; i < (sizeof(allowed_params) / sizeof(int)); i++) {
+        if (index == allowed_params[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool omx_video::reject_config_for_TME_mode(int index) {
+    int allowed_configs[] = {
+        OMX_IndexConfigVideoFramerate,
+        OMX_IndexConfigPriority,
+        OMX_IndexConfigOperatingRate,
+        OMX_IndexConfigTimePosition,
+        OMX_QcomIndexConfigPerfLevel,
+        OMX_QTIIndexConfigDescribeColorAspects,
+        OMX_IndexConfigAndroidVendorExtension
+    };
+
+    if (m_sOutPortFormat.eCompressionFormat != (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME) {
+        return false;
+    }
+
+    for (unsigned i = 0; i < (sizeof(allowed_configs) / sizeof(int)); i++) {
+        if (index == allowed_configs[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 /* ======================================================================
    FUNCTION
    omx_venc::GetParameter
@@ -1475,6 +1530,12 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
         DEBUG_PRINT_ERROR("ERROR: Get Param in Invalid paramData");
         return OMX_ErrorBadParameter;
     }
+
+    if (reject_param_for_TME_mode(paramIndex)) {
+        DEBUG_PRINT_ERROR("ERROR: Set Parameter 0x%x rejected in TME mode", (int)paramIndex);
+        return OMX_ErrorNone;
+    }
+
     switch ((int)paramIndex) {
         case OMX_IndexParamPortDefinition:
             {
@@ -1652,6 +1713,14 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 OMX_VIDEO_PARAM_HEVCTYPE* pParam = (OMX_VIDEO_PARAM_HEVCTYPE*)paramData;
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoHevc");
                 memcpy(pParam, &m_sParamHEVC, sizeof(m_sParamHEVC));
+                break;
+            }
+        case (OMX_INDEXTYPE)OMX_IndexParamVideoTme:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_VIDEO_PARAM_TMETYPE);
+                QOMX_VIDEO_PARAM_TMETYPE* pParam = (QOMX_VIDEO_PARAM_TMETYPE*)paramData;
+                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoTme");
+                memcpy(pParam, &m_sParamTME, sizeof(m_sParamTME));
                 break;
             }
         case OMX_IndexParamVideoProfileLevelQuerySupported:
@@ -2050,7 +2119,13 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
             {
                 if (paramData == NULL) { return OMX_ErrorBadParameter; }
                 OMX_U32 *consumerUsage = (OMX_U32 *)paramData;
+                OMX_U32 eProfile = 0;
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamConsumerUsageBits");
+                bool hevc = dev_get_hevc_profile(&eProfile);
+                if(hevc && eProfile == (OMX_U32)OMX_VIDEO_HEVCProfileMain10) {
+                    DEBUG_PRINT_INFO("Setting TP10 consumer usage bits");
+                    m_sParamConsumerUsage |= GRALLOC1_CONSUMER_USAGE_PRIVATE_10BIT_TP;
+                }
                 memcpy(consumerUsage, &m_sParamConsumerUsage, sizeof(m_sParamConsumerUsage));
                 break;
             }
@@ -2102,6 +2177,11 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
     if (m_state == OMX_StateInvalid) {
         DEBUG_PRINT_ERROR("ERROR: can't be in invalid state");
         return OMX_ErrorIncorrectStateOperation;
+    }
+
+    if (reject_config_for_TME_mode(configIndex)) {
+        DEBUG_PRINT_ERROR("ERROR: config 0x%x rejected in TME mode", configIndex);
+        return OMX_ErrorNone;
     }
 
     //@todo need to validate params
@@ -2390,6 +2470,12 @@ OMX_ERRORTYPE  omx_video::get_extension_index(OMX_IN OMX_HANDLETYPE      hComp,
         *indexType = (OMX_INDEXTYPE)OMX_QTIIndexParamVideoClientExtradata;
         return OMX_ErrorNone;
     }
+
+    if (extn_equals(paramName, OMX_QTI_INDEX_PARAM_TME)) {
+        *indexType = (OMX_INDEXTYPE)OMX_IndexParamVideoTme;
+        return OMX_ErrorNone;
+    }
+
     return OMX_ErrorNotImplemented;
 }
 
@@ -4217,6 +4303,14 @@ OMX_ERRORTYPE  omx_video::component_role_enum(OMX_IN OMX_HANDLETYPE hComp,
             DEBUG_PRINT_ERROR("ERROR: No more roles");
             eRet = OMX_ErrorNoMore;
         }
+    } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.tme", OMX_MAX_STRINGNAME_SIZE)) {
+        if ((0 == index) && role) {
+            strlcpy((char *)role, "video_encoder.tme", OMX_MAX_STRINGNAME_SIZE);
+            DEBUG_PRINT_LOW("component_role_enum: role %s", role);
+        } else {
+            DEBUG_PRINT_ERROR("ERROR: No more roles");
+            eRet = OMX_ErrorNoMore;
+        }
     }
     else {
         DEBUG_PRINT_ERROR("ERROR: Querying Role on Unknown Component");
@@ -4856,7 +4950,7 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
     /*Enable following code once private handle color format is
       updated correctly*/
 
-    if (buffer->nFilledLen > 0 && handle) {
+    if (buffer->nFilledLen > 0 && handle && !is_streamon_done((OMX_U32) PORT_INDEX_OUT)) {
 
         ColorConvertFormat c2dSrcFmt = RGBA8888;
         ColorConvertFormat c2dDestFmt = NV12_128m;
@@ -4866,18 +4960,21 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
 
         if (found != mMapPixelFormat2Converter.end()) {
             c2dSrcFmt = (ColorConvertFormat)found->second;
+            c2dcc.setConversionNeeded(true);
         } else {
-            DEBUG_PRINT_INFO("Couldn't find color mapping for (%x)."
-                             "Set src format to default RGBA8888", handle->format);
+            DEBUG_PRINT_HIGH("Couldn't find color mapping for (%x).", handle->format);
+            c2dcc.setConversionNeeded(false);
         }
 
         mUsesColorConversion = is_conv_needed(handle->format, handle->flags);
 
-        if (mUsesColorConversion) {
-            DEBUG_PRINT_HIGH("open Color conv for W: %u, H: %u",
-                             (unsigned int)m_sInPortDef.format.video.nFrameWidth,
-                             (unsigned int)m_sInPortDef.format.video.nFrameHeight);
-
+        if (c2dcc.getConversionNeeded() &&
+            c2dcc.isPropChanged(m_sInPortDef.format.video.nFrameWidth,
+                                m_sInPortDef.format.video.nFrameHeight,
+                                m_sInPortDef.format.video.nFrameWidth,
+                                m_sInPortDef.format.video.nFrameHeight,
+                                c2dSrcFmt, c2dDestFmt,
+                                handle->flags, handle->width)) {
             DEBUG_PRINT_HIGH("C2D setResolution (0x%X -> 0x%x) HxW (%dx%d) Stride (%d)",
                              c2dSrcFmt, c2dDestFmt,
                              m_sInPortDef.format.video.nFrameHeight,
@@ -4903,12 +5000,12 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
                 return OMX_ErrorBadParameter;
             }
             mC2dDestFmt = c2dDestFmt;
-
-            dev_get_buf_req (&m_sInPortDef.nBufferCountMin,
-                             &m_sInPortDef.nBufferCountActual,
-                             &m_sInPortDef.nBufferSize,
-                             m_sInPortDef.nPortIndex);
         }
+
+        dev_get_buf_req (&m_sInPortDef.nBufferCountMin,
+                         &m_sInPortDef.nBufferCountActual,
+                         &m_sInPortDef.nBufferSize,
+                         m_sInPortDef.nPortIndex);
     }
 
     if (input_flush_progress == true) {
@@ -4999,13 +5096,14 @@ OMX_ERRORTYPE omx_video::convert_queue_buffer(OMX_HANDLETYPE hComp,
             DEBUG_PRINT_LOW("Buffer header %p Filled len size %u",
                     pdest_frame, (unsigned int)pdest_frame->nFilledLen);
         }
-    } else {
+    } else if (c2dcc.getConversionNeeded()) {
         uva = (unsigned char *)mmap(NULL, Input_pmem_info.size,
                 PROT_READ|PROT_WRITE,
                 MAP_SHARED,Input_pmem_info.fd,0);
         if (uva == MAP_FAILED) {
             ret = OMX_ErrorBadParameter;
         } else {
+            DEBUG_PRINT_HIGH("Start Color Conversion...");
             if (!c2dcc.convertC2D(Input_pmem_info.fd, uva,
                                   uva, m_pInput_pmem[index].fd,
                                   pdest_frame->pBuffer,
@@ -5083,7 +5181,7 @@ OMX_ERRORTYPE omx_video::push_input_buffer(OMX_HANDLETYPE hComp)
         // separately by queueing an intermediate color-conversion buffer
         // and propagate the EOS.
         if (psource_frame->nFilledLen == 0 && (psource_frame->nFlags & OMX_BUFFERFLAG_EOS)) {
-            return push_empty_eos_buffer(hComp, psource_frame);
+            return push_empty_eos_buffer(hComp);
         }
         media_buffer = (LEGACY_CAM_METADATA_TYPE *)psource_frame->pBuffer;
         /*Will enable to verify camcorder in current TIPS can be removed*/
@@ -5120,8 +5218,7 @@ OMX_ERRORTYPE omx_video::push_input_buffer(OMX_HANDLETYPE hComp)
     return ret;
 }
 
-OMX_ERRORTYPE omx_video::push_empty_eos_buffer(OMX_HANDLETYPE hComp,
-        OMX_BUFFERHEADERTYPE* buffer) {
+OMX_ERRORTYPE omx_video::push_empty_eos_buffer(OMX_HANDLETYPE hComp) {
     OMX_BUFFERHEADERTYPE* opqBuf = NULL;
     OMX_ERRORTYPE retVal = OMX_ErrorNone;
     unsigned index = 0;
@@ -5141,7 +5238,7 @@ OMX_ERRORTYPE omx_video::push_empty_eos_buffer(OMX_HANDLETYPE hComp,
             }
             index = opqBuf - m_inp_mem_ptr;
         } else {
-            opqBuf = (OMX_BUFFERHEADERTYPE* ) buffer;
+            opqBuf = (OMX_BUFFERHEADERTYPE* ) psource_frame;
             index = opqBuf - meta_buffer_hdr;
         }
 
@@ -5170,8 +5267,8 @@ OMX_ERRORTYPE omx_video::push_empty_eos_buffer(OMX_HANDLETYPE hComp,
         OMX_BUFFERHEADERTYPE emptyEosBufHdr;
         memcpy(&emptyEosBufHdr, opqBuf, sizeof(OMX_BUFFERHEADERTYPE));
         emptyEosBufHdr.nFilledLen = 0;
-        emptyEosBufHdr.nTimeStamp = buffer->nTimeStamp;
-        emptyEosBufHdr.nFlags = buffer->nFlags;
+        emptyEosBufHdr.nTimeStamp = psource_frame->nTimeStamp;
+        emptyEosBufHdr.nFlags = psource_frame->nFlags;
         emptyEosBufHdr.pBuffer = NULL;
         if (!mUsesColorConversion)
             emptyEosBufHdr.nAllocLen =
@@ -5188,7 +5285,8 @@ OMX_ERRORTYPE omx_video::push_empty_eos_buffer(OMX_HANDLETYPE hComp,
 
     //return client's buffer regardless since intermediate color-conversion
     //buffer is sent to the the encoder
-    m_pCallbacks.EmptyBufferDone(hComp, m_app_data, buffer);
+    m_pCallbacks.EmptyBufferDone(hComp, m_app_data, psource_frame);
+    psource_frame = NULL;
     --pending_input_buffers;
     VIDC_TRACE_INT_LOW("ETB-pending", pending_input_buffers);
     return retVal;
