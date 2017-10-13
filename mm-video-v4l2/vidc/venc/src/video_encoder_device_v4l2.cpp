@@ -49,6 +49,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #endif
 
 #include <qdMetaData.h>
+#include <color_metadata.h>
 #include "PlatformConfig.h"
 
 #define ATRACE_TAG ATRACE_TAG_VIDEO
@@ -85,6 +86,8 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define VENC_BFRAME_MAX_WIDTH       1920
 #define VENC_BFRAME_MAX_HEIGHT      1088
 
+#undef LOG_TAG
+#define LOG_TAG "OMX-VENC: venc_dev"
 //constructor
 venc_dev::venc_dev(class omx_venc *venc_class)
 {
@@ -151,6 +154,8 @@ venc_dev::venc_dev(class omx_venc *venc_class)
             (int32_t *)&m_debug.in_buffer_log, 0);
     Platform::Config::getInt32(Platform::vidc_enc_log_out,
             (int32_t *)&m_debug.out_buffer_log, 0);
+    Platform::Config::getInt32(Platform::vidc_enc_csc_custom_matrix,
+            (int32_t *)&is_csc_custom_matrix_enabled, 0);
 
     char property_value[PROPERTY_VALUE_MAX] = {0};
 
@@ -175,8 +180,6 @@ venc_dev::venc_dev(class omx_venc *venc_class)
 #else
     is_gralloc_source_ubwc = 0;
 #endif
-    // TODO: Support in XML
-    is_csc_enabled = 0;
 
      property_value[0] = '\0';
      property_get("vendor.vidc.log.loc", property_value, BUFFER_LOG_LOC);
@@ -1350,6 +1353,8 @@ bool venc_dev::venc_open(OMX_U32 codec)
         maxqp = 51;
         codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
         profile_level.level = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_1;
+    } else if (codec == QOMX_VIDEO_CodingTME) {
+        m_sVenc_cfg.codectype = V4L2_PIX_FMT_TME;
     }
     session_ipb_qp_values.min_i_qp = minqp;
     session_ipb_qp_values.max_i_qp = maxqp;
@@ -1461,13 +1466,15 @@ bool venc_dev::venc_open(OMX_U32 codec)
     resume_in_stopped = 0;
     metadatamode = 0;
 
-    control.id = V4L2_CID_MPEG_VIDEO_HEADER_MODE;
-    control.value = V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE;
+    if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_TME) {
+        control.id = V4L2_CID_MPEG_VIDEO_HEADER_MODE;
+        control.value = V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE;
 
-    DEBUG_PRINT_LOW("Calling IOCTL to disable seq_hdr in sync_frame id=%d, val=%d", control.id, control.value);
+        DEBUG_PRINT_LOW("Calling IOCTL to disable seq_hdr in sync_frame id=%d, val=%d", control.id, control.value);
 
-    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control))
-        DEBUG_PRINT_ERROR("Failed to set control");
+        if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control))
+            DEBUG_PRINT_ERROR("Failed to set control");
+    }
 
     struct v4l2_frmsizeenum frmsize;
 
@@ -1503,6 +1510,17 @@ bool venc_dev::venc_open(OMX_U32 codec)
     input_extradata_info.port_index = OUTPUT_PORT;
     output_extradata_info.port_index = CAPTURE_PORT;
 
+    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_TME) {
+        control.id = V4L2_CID_MPEG_VIDC_VIDEO_TME_PAYLOAD_VERSION;
+        ret = ioctl(m_nDriver_fd, VIDIOC_G_CTRL,&control);
+
+        if (ret) {
+            DEBUG_PRINT_ERROR("Failed to read TME version");
+            return false;
+        }
+        venc_handle->tme_payload_version = control.value;
+        DEBUG_PRINT_HIGH("TME version is 0x%x", control.value);
+    }
     return true;
 }
 
@@ -1947,8 +1965,10 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                         }
                         m_sOutput_buff_property.datasize = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
 
-                        if (!venc_set_target_bitrate(portDefn->format.video.nBitrate)) {
-                            return false;
+                        if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_TME) {
+                            if (!venc_set_target_bitrate(portDefn->format.video.nBitrate)) {
+                                return false;
+                            }
                         }
 
                         bufreq.memory = V4L2_MEMORY_USERPTR;
@@ -2116,6 +2136,23 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 OMX_U32 nPFrames = pParam->nKeyFrameInterval > 0 ? pParam->nKeyFrameInterval - 1 : fps - 1;
                 if (!venc_set_intra_period (nPFrames, 0 /* nBFrames */)) {
                     DEBUG_PRINT_ERROR("ERROR: Request for setting intra period failed");
+                    return false;
+                }
+                break;
+            }
+            case (OMX_INDEXTYPE)OMX_IndexParamVideoTme:
+            {
+                DEBUG_PRINT_LOW("venc_set_param:OMX_IndexParamVideoTme");
+                QOMX_VIDEO_PARAM_TMETYPE * pParam = (QOMX_VIDEO_PARAM_TMETYPE*)paramData;
+
+                if (!venc_set_profile(pParam->eProfile)) {
+                    DEBUG_PRINT_ERROR("ERROR: Unsuccessful in updating Profile %d",
+                                        pParam->eProfile);
+                    return false;
+                }
+                if (!venc_set_level(pParam->eLevel)) {
+                    DEBUG_PRINT_ERROR("ERROR: Unsuccessful in updating level %d",
+                                      pParam->eLevel);
                     return false;
                 }
                 break;
@@ -3061,6 +3098,11 @@ unsigned venc_dev::venc_stop( void)
     return rc;
 }
 
+bool venc_dev::is_streamon_done(OMX_U32 port)
+{
+    return streaming[port];
+}
+
 unsigned venc_dev::venc_pause(void)
 {
     pthread_mutex_lock(&pause_resume_mlock);
@@ -3627,6 +3669,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                     if (!streaming[OUTPUT_PORT] && !(m_sVenc_cfg.inputformat == V4L2_PIX_FMT_RGB32 ||
                         m_sVenc_cfg.inputformat == V4L2_PIX_FMT_RGBA8888_UBWC)) {
 
+                        unsigned int is_csc_enabled = 0;
                         struct v4l2_format fmt;
                         OMX_COLOR_FORMATTYPE color_format = (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m;
 
@@ -3718,12 +3761,14 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                     }
 
                     if (!streaming[OUTPUT_PORT]) {
-                        int color_space = 0;
+                        unsigned int is_csc_enabled = 0;
+                        ColorMetaData colorData= {};
                         // Moment of truth... actual colorspace is known here..
-                        ColorSpace_t colorSpace = ITU_R_601;
-                        if (getMetaData(handle, GET_COLOR_SPACE, &colorSpace) == 0) {
-                            DEBUG_PRINT_INFO("ENC_CONFIG: gralloc ColorSpace = %d (601=%d 601_FR=%d 709=%d)",
-                                    colorSpace, ITU_R_601, ITU_R_601_FR, ITU_R_709);
+                        if (getMetaData(handle, GET_COLOR_METADATA, &colorData) == 0) {
+                            DEBUG_PRINT_INFO("ENC_CONFIG: gralloc Color MetaData colorPrimaries=%d colorRange=%d "
+                                             "transfer=%d matrixcoefficients=%d",
+                                             colorData.colorPrimaries, colorData.range,
+                                             colorData.transfer, colorData.matrixCoefficients);
                         }
 
                         struct v4l2_format fmt;
@@ -3739,68 +3784,75 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                             // Disregard the Colorspace in gralloc-handle in case of RGB and use
                             //   [a] 601 for non-UBWC case : C2D output is (apparently) 601-LR
                             //   [b] 601 for UBWC case     : Venus can convert to 601-LR or FR. use LR for now.
-                            colorSpace = ITU_R_601;
+                            //set colormetadata corresponding to ITU_R_601;
+                            colorData.colorPrimaries =  ColorPrimaries_BT601_6_525;
+                            colorData.range = Range_Limited;
+                            colorData.transfer = Transfer_SMPTE_170M;
+                            colorData.matrixCoefficients = MatrixCoEff_BT601_6_525;
                             m_sVenc_cfg.inputformat = isUBWC ? V4L2_PIX_FMT_RGBA8888_UBWC : V4L2_PIX_FMT_RGB32;
                             DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = RGBA8888 %s", isUBWC ? "UBWC" : "Linear");
                         } else if (handle->format == QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m) {
                             m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12;
                             DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = NV12 Linear");
+                        } else if (handle->format == HAL_PIXEL_FORMAT_YCbCr_420_TP10_UBWC) {
+                            if ((m_codec == OMX_VIDEO_CodingHEVC) &&
+                                 (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10)) {
+                                m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12_TP10_UBWC;
+                                DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = TP10UBWC");
+                            } else {
+                                DEBUG_PRINT_ERROR("ENC_CONFIG: TP10UBWC colorformat not supported for this codec and profile");
+                                return false;
+                            }
                         }
 
-                        // If device recommendation (persist.vidc.enc.csc.enable) is to use 709, force CSC
-                        if (colorSpace == ITU_R_601_FR && is_csc_enabled) {
+                        DEBUG_PRINT_INFO("color_space.primaries %d colorData.colorPrimaries %d, is_csc_custom_matrix_enabled=%d",
+                                         color_space.primaries, colorData.colorPrimaries, is_csc_custom_matrix_enabled);
+
+                        bool is_color_space_601fr = (colorData.colorPrimaries == ColorPrimaries_BT601_6_525) &&
+                                                    (colorData.range == Range_Full) &&
+                                                    (colorData.transfer == Transfer_SMPTE_170M) &&
+                                                    (colorData.matrixCoefficients == MatrixCoEff_BT601_6_525);
+
+                        if (is_color_space_601fr &&
+                            color_space.primaries == ColorPrimaries_BT709_5)
+                        {
+                            DEBUG_PRINT_INFO("Enable CSC from BT601 to BT709 supported.");
+                            is_csc_enabled = 1;
+                        }
+
+                        // If CSC is enabled, then set control with colorspace from gralloc metadata
+                        if (is_csc_enabled) {
                             struct v4l2_control control;
+
+                            /* Set 601FR as the Color Space. When we set CSC, this will be passed to
+                               fimrware as the InputPrimaries */
+                            venc_set_colorspace(colorData.colorPrimaries, colorData.range,
+                                                colorData.transfer, colorData.matrixCoefficients);
+
                             control.id = V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC;
                             control.value = V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_ENABLE;
                             if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                                DEBUG_PRINT_ERROR("venc_empty_buf: Failed to set VPE CSC for 601_to_709");
-                            } else {
-                                DEBUG_PRINT_INFO("venc_empty_buf: Will convert 601-FR to 709");
-                                colorSpace = ITU_R_709;
+                                DEBUG_PRINT_ERROR("venc_empty_buf: Failed to set VPE CSC");
+                            }
+                            if (is_csc_custom_matrix_enabled) {
+                                control.id = V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_CUSTOM_MATRIX;
+                                control.value = 1;
+                                if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+                                    DEBUG_PRINT_ERROR("venc_empty_buf: Failed to enable VPE CSC custom matrix");
+                                } else {
+                                    DEBUG_PRINT_INFO("venc_empty_buf: Enabled VPE CSC custom matrix");
+                                    colorData.colorPrimaries =  ColorPrimaries_BT709_5;
+                                    colorData.range = Range_Limited;
+                                    colorData.transfer = Transfer_sRGB;
+                                    colorData.matrixCoefficients = MatrixCoEff_BT709_5;
+                                }
                             }
                         }
 
-                        msm_vidc_h264_color_primaries_values primary;
-                        msm_vidc_h264_transfer_chars_values transfer;
-                        msm_vidc_h264_matrix_coeff_values matrix;
-                        OMX_U32 range;
-
-                        switch (colorSpace) {
-                            case ITU_R_601_FR:
-                            {
-                                primary = MSM_VIDC_BT601_6_525;
-                                range = 1; // full
-                                transfer = MSM_VIDC_TRANSFER_601_6_525;
-                                matrix = MSM_VIDC_MATRIX_601_6_525;
-
-                                fmt.fmt.pix_mp.colorspace = V4L2_COLORSPACE_470_SYSTEM_BG;
-                                break;
-                            }
-                            case ITU_R_709:
-                            {
-                                primary = MSM_VIDC_BT709_5;
-                                range = 0; // limited
-                                transfer = MSM_VIDC_TRANSFER_BT709_5;
-                                matrix = MSM_VIDC_MATRIX_BT_709_5;
-
-                                fmt.fmt.pix_mp.colorspace = V4L2_COLORSPACE_REC709;
-                                break;
-                            }
-                            default:
-                            {
-                                // 601 or something else ? assume 601
-                                primary = MSM_VIDC_BT601_6_625;
-                                range = 0; //limited
-                                transfer = MSM_VIDC_TRANSFER_601_6_625;
-                                matrix = MSM_VIDC_MATRIX_601_6_625;
-
-                                fmt.fmt.pix_mp.colorspace = V4L2_COLORSPACE_470_SYSTEM_BG;
-                                break;
-                            }
-                        }
-                        DEBUG_PRINT_INFO("ENC_CONFIG: selected ColorSpace = %d (601=%d 601_FR=%d 709=%d)",
-                                    colorSpace, ITU_R_601, ITU_R_601_FR, ITU_R_709);
-                        venc_set_colorspace(primary, range, transfer, matrix);
+                        /* Enum values from gralloc ColorMetaData matches with the driver values
+                           as it is standard compliant */
+                        venc_set_colorspace(colorData.colorPrimaries, colorData.range,
+                                            colorData.transfer, colorData.matrixCoefficients);
 
                         fmt.fmt.pix_mp.pixelformat = m_sVenc_cfg.inputformat;
                         fmt.fmt.pix_mp.height = m_sVenc_cfg.input_height;
@@ -4256,6 +4308,10 @@ bool venc_dev::venc_set_inband_video_header(OMX_BOOL enable)
 {
     struct v4l2_control control;
 
+    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_TME) {
+        return false;
+    }
+
     control.id = V4L2_CID_MPEG_VIDEO_HEADER_MODE;
     if(enable) {
         control.value = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME;
@@ -4611,8 +4667,10 @@ bool venc_dev::venc_set_profile(OMX_U32 eProfile)
     } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
         //In driver VP8 profile is hardcoded. No need to set anything from here
         return true;
-    }  else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
+    } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_HEVC_PROFILE;
+    } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_TME) {
+        control.id = V4L2_CID_MPEG_VIDC_VIDEO_TME_PROFILE;
     } else {
         DEBUG_PRINT_ERROR("Wrong CODEC");
         return false;
@@ -4650,39 +4708,23 @@ bool venc_dev::venc_set_level(OMX_U32 eLevel)
         control.value = V4L2_MPEG_VIDEO_H264_LEVEL_UNKNOWN;
     } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_VP8_PROFILE_LEVEL;
-        switch (eLevel) {
-            case OMX_VIDEO_VP8Level_Version0:
-                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_0;
-                break;
-            case OMX_VIDEO_VP8Level_Version1:
-                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_1;
-                break;
-            case OMX_VIDEO_VP8Level_Version2:
-                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_2;
-                break;
-            case OMX_VIDEO_VP8Level_Version3:
-                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_3;
-                break;
-            case OMX_VIDEO_VP8LevelUnknown:
-            case OMX_VIDEO_VP8LevelMax:
-            default:
-                control.value = V4L2_MPEG_VIDC_VIDEO_VP8_UNUSED;
-                break;
-        }
+        control.value = V4L2_MPEG_VIDC_VIDEO_VP8_UNUSED;
     } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_HEVC_TIER_LEVEL;
         control.value = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_UNKNOWN;
-    }  else {
+    } else if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_TME) {
+        control.id = V4L2_CID_MPEG_VIDC_VIDEO_TME_LEVEL;
+        control.value = V4L2_MPEG_VIDC_VIDEO_TME_LEVEL_INTEGER;
+    } else {
         DEBUG_PRINT_ERROR("Wrong CODEC");
         return false;
     }
 
-    /* If OMX_VIDEO_LEVEL_*/
+    /* If OMX_VIDEO_LEVEL_UNKNOWN then set default values assigned above  */
     if (eLevel != OMX_VIDEO_LEVEL_UNKNOWN) {
         if (!profile_level_converter::convert_omx_level_to_v4l2(m_sVenc_cfg.codectype, eLevel, &control.value)) {
-            DEBUG_PRINT_ERROR(" Cannot find v4l2 level for OMX level : %d Codec : %lu ",
+            DEBUG_PRINT_LOW("Warning: Cannot find v4l2 level for OMX level : %d Codec : %lu Setting unknown level",
                               eLevel, m_sVenc_cfg.codectype);
-            return false;
         }
     }
 
@@ -5340,6 +5382,9 @@ unsigned long venc_dev::venc_get_codectype(OMX_VIDEO_CODINGTYPE eCompressionForm
         break;
     case OMX_VIDEO_CodingHEVC:
         codectype = V4L2_PIX_FMT_HEVC;
+        break;
+    case QOMX_VIDEO_CodingTME:
+        codectype = V4L2_PIX_FMT_TME;
         break;
     default:
         DEBUG_PRINT_ERROR("Unsupported eCompressionFormat %#x", eCompressionFormat);
@@ -6687,6 +6732,16 @@ bool venc_dev::venc_reconfigure_ltrmode() {
     return true;
 }
 
+bool venc_dev::venc_get_hevc_profile(OMX_U32* profile)
+{
+    if (profile == nullptr) return false;
+
+    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
+        if(profile_level_converter::convert_v4l2_profile_to_omx(V4L2_PIX_FMT_HEVC, codec_profile.profile, (int*)profile)) {
+            return true;
+        } else return false;
+    } else return false;
+}
 bool venc_dev::venc_get_profile_level(OMX_U32 *eProfile,OMX_U32 *eLevel)
 {
     bool status = true;

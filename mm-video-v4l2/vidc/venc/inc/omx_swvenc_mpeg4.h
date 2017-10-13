@@ -125,6 +125,7 @@ class omx_venc: public omx_video
         bool dev_empty_buf(void *, void *,unsigned,unsigned);
         bool dev_fill_buf(void *, void *,unsigned,unsigned);
         bool dev_get_buf_req(OMX_U32 *,OMX_U32 *,OMX_U32 *,OMX_U32);
+        bool is_streamon_done(OMX_U32 port);
         bool dev_set_buf_req(OMX_U32 const *,OMX_U32 const *,OMX_U32 const *,OMX_U32);
         bool dev_get_seq_hdr(void *, unsigned, unsigned *);
         bool dev_loaded_start(void);
@@ -141,9 +142,7 @@ class omx_venc: public omx_video
                     OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE */*SupportedPattern*/) {
             return false;
         }
-        OMX_ERRORTYPE dev_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVELTYPE */*profileLevelType*/) {
-            return OMX_ErrorNone;
-        }
+        OMX_ERRORTYPE dev_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVELTYPE */*profileLevelType*/);
         bool dev_is_video_session_supported(OMX_U32 width, OMX_U32 height);
         bool dev_color_align(OMX_BUFFERHEADERTYPE *buffer, OMX_U32 width,
                         OMX_U32 height);
@@ -169,6 +168,7 @@ class omx_venc: public omx_video
            OMX_U32 port
         );
         int swvenc_input_log_buffers(const char *buffer, int bufferlen);
+        bool dev_get_hevc_profile(OMX_U32*) { return false; }
 
 };
 
