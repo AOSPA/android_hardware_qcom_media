@@ -149,7 +149,8 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     client_req_disable_bframe   = false;
     client_req_disable_temporal_layers  = false;
     client_req_turbo_mode  = false;
-
+    intra_period.num_pframes = 29;
+    intra_period.num_bframes = 0;
 
     Platform::Config::getInt32(Platform::vidc_enc_log_in,
             (int32_t *)&m_debug.in_buffer_log, 0);
@@ -1063,7 +1064,7 @@ bool venc_dev::venc_get_supported_color_format(unsigned index, OMX_U32 *colorFor
         [1] = QOMX_COLOR_FormatYVU420SemiPlanar,
         [2] = QOMX_COLOR_FormatAndroidOpaque,
         [3] = OMX_COLOR_FormatYUV420SemiPlanar,
-    }
+    };
 #endif
     if (index > (sizeof(supportedFormats)/sizeof(*supportedFormats) - 1))
         return false;
@@ -1155,7 +1156,7 @@ bool venc_dev::venc_get_output_log_flag()
     return (m_debug.out_buffer_log == 1);
 }
 
-int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len)
+int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len, uint64_t timestamp)
 {
     if (venc_handle->is_secure_session()) {
         DEBUG_PRINT_ERROR("logging secure output buffers is not allowed!");
@@ -1185,8 +1186,18 @@ int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len)
             m_debug.outfile_name[0] = '\0';
             return -1;
         }
+        if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
+            int fps = m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den;
+            IvfFileHeader ivfFileHeader(false, m_sVenc_cfg.input_width,
+                                        m_sVenc_cfg.input_height, fps, 1, 0);
+            fwrite(&ivfFileHeader, sizeof(ivfFileHeader), 1, m_debug.outfile);
+        }
     }
     if (m_debug.outfile && buffer_len) {
+        if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
+            IvfFrameHeader ivfFrameHeader(buffer_len, timestamp);
+            fwrite(&ivfFrameHeader, sizeof(ivfFrameHeader), 1, m_debug.outfile);
+        }
         DEBUG_PRINT_LOW("%s buffer_len:%d", __func__, buffer_len);
         fwrite(buffer_addr, buffer_len, 1, m_debug.outfile);
     }
@@ -1380,6 +1391,7 @@ bool venc_dev::venc_open(OMX_U32 codec)
         m_sVenc_cfg.codectype = V4L2_PIX_FMT_H264;
         codec_profile.profile = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE;
         profile_level.level = V4L2_MPEG_VIDEO_H264_LEVEL_1_0;
+        idrperiod.idrperiod = 1;
         minqp = 0;
         maxqp = 51;
     } else if (codec == OMX_VIDEO_CodingVP8) {
@@ -1390,6 +1402,7 @@ bool venc_dev::venc_open(OMX_U32 codec)
         maxqp = 127;
     } else if (codec == OMX_VIDEO_CodingHEVC) {
         m_sVenc_cfg.codectype = V4L2_PIX_FMT_HEVC;
+        idrperiod.idrperiod = 1;
         minqp = 0;
         maxqp = 51;
         codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
@@ -1958,6 +1971,24 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                         if (num_input_planes > 1)
                             input_extradata_info.count = m_sInput_buff_property.actualcount + 1;
 
+                        if (!downscalar_enabled) {
+                            m_sVenc_cfg.dvs_height = portDefn->format.video.nFrameHeight;
+                            m_sVenc_cfg.dvs_width = portDefn->format.video.nFrameWidth;
+                        }
+                        memset(&fmt, 0, sizeof(fmt));
+                        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+                        fmt.fmt.pix_mp.height = m_sVenc_cfg.dvs_height;
+                        fmt.fmt.pix_mp.width = m_sVenc_cfg.dvs_width;
+                        fmt.fmt.pix_mp.pixelformat = m_sVenc_cfg.codectype;
+
+                        if (ioctl(m_nDriver_fd, VIDIOC_S_FMT, &fmt)) {
+                            DEBUG_PRINT_ERROR("VIDIOC_S_FMT CAPTURE_MPLANE Failed");
+                            hw_overload = errno == EBUSY;
+                            return false;
+                        }
+
+                        m_sOutput_buff_property.datasize = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
+
                     } else {
                         DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamPortDefinition: parameters not changed on port %d",
                             portDefn->nPortIndex);
@@ -2173,7 +2204,7 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 if (!venc_set_inloop_filter(OMX_VIDEO_AVCLoopFilterEnable))
                     DEBUG_PRINT_HIGH("WARN: Request for setting Inloop filter failed for HEVC encoder");
 
-                OMX_U32 fps = m_sVenc_cfg.fps_num ? m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den : 30;
+                OMX_U32 fps = m_sVenc_cfg.fps_den ? m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den : 30;
                 OMX_U32 nPFrames = pParam->nKeyFrameInterval > 0 ? pParam->nKeyFrameInterval - 1 : fps - 1;
                 if (!venc_set_intra_period (nPFrames, 0 /* nBFrames */)) {
                     DEBUG_PRINT_ERROR("ERROR: Request for setting intra period failed");
@@ -2787,10 +2818,12 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                 OMX_VIDEO_CONFIG_AVCINTRAPERIOD *avc_iperiod = (OMX_VIDEO_CONFIG_AVCINTRAPERIOD*) configData;
                 DEBUG_PRINT_LOW("venc_set_param: OMX_IndexConfigVideoAVCIntraPeriod");
 
-                if (venc_set_idr_period(avc_iperiod->nPFrames, avc_iperiod->nIDRPeriod)
-                        == false) {
-                    DEBUG_PRINT_ERROR("ERROR: Setting "
-                            "OMX_IndexConfigVideoAVCIntraPeriod failed");
+                if (venc_set_intra_period(avc_iperiod->nPFrames, intra_period.num_bframes) == false) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting intra period failed");
+                    return false;
+                }
+                if (venc_set_idr_period(avc_iperiod->nIDRPeriod) == false) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting idr period failed");
                     return false;
                 }
                 break;
@@ -3083,6 +3116,53 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
             break;
     }
 
+    return true;
+}
+
+bool venc_dev::venc_handle_empty_eos_buffer( void)
+{
+    struct v4l2_encoder_cmd enc;
+    int rc = 0;
+
+    if (!streaming[OUTPUT_PORT]) {
+        enum v4l2_buf_type buf_type;
+        struct v4l2_control control;
+        int ret = 0;
+
+        /* If first ETB is an EOS with 0 filled length there is a limitation */
+        /* for which we need to combine sequence header with 1st frame       */
+        control.id = V4L2_CID_MPEG_VIDEO_HEADER_MODE;
+        control.value = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME;
+        DEBUG_PRINT_LOW("Combining sequence header with 1st frame ");
+        ret = ioctl(m_nDriver_fd,  VIDIOC_S_CTRL, &control);
+        if (ret) {
+            DEBUG_PRINT_ERROR("Failed to set header mode");
+            return false;
+        }
+
+        buf_type=V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+
+        DEBUG_PRINT_HIGH("Calling streamon before issuing stop command for EOS");
+        ret = ioctl(m_nDriver_fd, VIDIOC_STREAMON, &buf_type);
+        if (ret) {
+            DEBUG_PRINT_ERROR("Failed to call streamon");
+            if (errno == EBUSY) {
+                hw_overload = true;
+            }
+            return false;
+        } else {
+            streaming[OUTPUT_PORT] = true;
+        }
+    }
+
+    memset(&enc, 0, sizeof(enc));
+    enc.cmd = V4L2_ENC_CMD_STOP;
+    DEBUG_PRINT_LOW("Sending : Encoder STOP comamnd");
+    rc = ioctl(m_nDriver_fd, VIDIOC_ENCODER_CMD, &enc);
+    if (rc) {
+        DEBUG_PRINT_ERROR("Failed : Encoder STOP comamnd");
+        return false;
+    }
     return true;
 }
 
@@ -3588,18 +3668,22 @@ bool venc_dev::venc_color_align(OMX_BUFFERHEADERTYPE *buffer,
         src_buf += width * height;
         dst_buf += y_stride * y_scanlines;
         for (int line = height / 2 - 1; line >= 0; --line) {
+            /* Align the length to 16 for better memove performance. */
             memmove(dst_buf + line * uv_stride,
                     src_buf + line * width,
-                    width);
+                    ALIGN(width, 16));
         }
 
         dst_buf = src_buf = buffer->pBuffer;
         //Copy the Y next
         for (int line = height - 1; line > 0; --line) {
+            /* Align the length to 16 for better memove performance. */
             memmove(dst_buf + line * y_stride,
                     src_buf + line * width,
-                    width);
+                    ALIGN(width, 16));
         }
+        /* Inform driver to do cache flush on total buffer */
+        buffer->nFilledLen = buffer->nAllocLen;
     } else {
         DEBUG_PRINT_ERROR("Failed to align Chroma. from %u to %u : \
                 Insufficient bufferLen=%u v/s Required=%u",
@@ -3655,6 +3739,7 @@ bool venc_dev::venc_get_batch_size(OMX_U32 *size)
     }
 }
 
+
 bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index, unsigned fd)
 {
     struct pmem *temp_buffer;
@@ -3701,13 +3786,13 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
             meta_buf = (LEGACY_CAM_METADATA_TYPE *)bufhdr->pBuffer;
 
             if (!meta_buf) {
-                //empty EOS buffer
-                if (!bufhdr->nFilledLen && (bufhdr->nFlags & OMX_BUFFERFLAG_EOS)) {
-                    plane[0].data_offset = bufhdr->nOffset;
-                    plane[0].length = bufhdr->nAllocLen;
-                    plane[0].bytesused = bufhdr->nFilledLen;
-                    DEBUG_PRINT_LOW("venc_empty_buf: empty EOS buffer");
-                } else {
+                if (!bufhdr->nFilledLen) {
+                    if (bufhdr->nFlags & OMX_BUFFERFLAG_EOS) {
+                        DEBUG_PRINT_ERROR("venc_empty_buf: Zero length EOS buffers are not valid");
+                        DEBUG_PRINT_ERROR("Use this function instead : venc_handle_empty_eos_buffer");
+                        return false;
+                    }
+                    DEBUG_PRINT_ERROR("venc_empty_buf: Zero length buffers are not valid");
                     return false;
                 }
             } else if (!color_format) {
@@ -4046,6 +4131,16 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
 
     if (bufhdr->nFlags & OMX_BUFFERFLAG_EOS)
         buf.flags |= V4L2_QCOM_BUF_FLAG_EOS;
+
+    if (!plane[0].bytesused) {
+        if (buf.flags & V4L2_QCOM_BUF_FLAG_EOS) {
+            DEBUG_PRINT_ERROR("venc_empty_buf: Zero length EOS buffers are not valid");
+            DEBUG_PRINT_ERROR("Use this function instead : venc_handle_empty_eos_buffer");
+            return false;
+        }
+        DEBUG_PRINT_ERROR("venc_empty_buf: Zero length buffers are not valid");
+        return false;
+    }
 
     if (m_debug.in_buffer_log) {
         venc_input_log_buffers(bufhdr, fd, plane[0].data_offset, m_sVenc_cfg.inputformat);
@@ -4908,9 +5003,6 @@ bool venc_dev::venc_reconfigure_intra_period()
     } else if (!enableBframes && intra_period.num_bframes > 0) {
         intra_period.num_pframes = intra_period.num_pframes + (intra_period.num_pframes * intra_period.num_bframes);
         intra_period.num_bframes = 0;
-    } else {
-        // Values already set for nP/B frames are correct
-        return true;
     }
 
     if (!venc_calibrate_gop())
@@ -4942,6 +5034,18 @@ bool venc_dev::venc_reconfigure_intra_period()
     }
 
     DEBUG_PRINT_LOW("Success IOCTL set control for V4L2_CID_MPEG_VIDC_VIDEO_NUM_B_FRAMES value=%lu", intra_period.num_bframes);
+
+    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 ||
+        m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
+        /*
+         * This call is to ensure default idr period is set if client
+         * did not set it using index OMX_IndexConfigVideoAVCIntraPeriod.
+         */
+        if (venc_set_idr_period(idrperiod.idrperiod) == false) {
+            DEBUG_PRINT_ERROR("ERROR: Setting idr period failed");
+            return false;
+        }
+    }
 
     return true;
 }
@@ -4999,7 +5103,6 @@ bool venc_dev::venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
         DEBUG_PRINT_ERROR("Failed to set control, id %#x, value %d", control.id, control.value);
         return false;
     }
-
     DEBUG_PRINT_LOW("Success IOCTL set control for id=%d, value=%d", control.id, control.value);
 
     control.id = V4L2_CID_MPEG_VIDC_VIDEO_NUM_B_FRAMES;
@@ -5010,55 +5113,37 @@ bool venc_dev::venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
         DEBUG_PRINT_ERROR("Failed to set control, id %#x, value %d", control.id, control.value);
         return false;
     }
+    DEBUG_PRINT_LOW("Success IOCTL set control for id=%d, value=%d", control.id, control.value);
 
-    DEBUG_PRINT_LOW("Success IOCTL set control for id=%d, value=%lu", control.id, intra_period.num_bframes);
-
-    if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264 ||
-        m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC) {
-        control.id = V4L2_CID_MPEG_VIDC_VIDEO_IDR_PERIOD;
-        control.value = 1;
-
-        rc = ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control);
-
-        if (rc) {
-        DEBUG_PRINT_ERROR("Failed to set control, id %#x, value %d", control.id, control.value);
-            return false;
-        }
-        idrperiod.idrperiod = 1;
-    }
     return true;
 }
 
-bool venc_dev::venc_set_idr_period(OMX_U32 nPFrames, OMX_U32 nIDRPeriod)
+bool venc_dev::venc_set_idr_period(OMX_U32 nIDRPeriod)
 {
     int rc = 0;
     struct v4l2_control control;
-    DEBUG_PRINT_LOW("venc_set_idr_period: nPFrames = %u, nIDRPeriod: %u",
-            (unsigned int)nPFrames, (unsigned int)nIDRPeriod);
 
-    if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264) {
-        DEBUG_PRINT_ERROR("ERROR: IDR period valid for H264 only!!");
+    if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264 &&
+        m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC) {
+        // don't return error if idr period is zero even though invalid codectype
+        if (!nIDRPeriod)
+            return true;
+
+        DEBUG_PRINT_ERROR("venc_set_idr_period: invalid codedtype (%#lx)",
+            m_sVenc_cfg.codectype);
         return false;
     }
 
-    if (venc_set_intra_period (nPFrames, intra_period.num_bframes) == false) {
-        DEBUG_PRINT_ERROR("ERROR: Request for setting intra period failed");
-        return false;
-    }
-
-    if (!intra_period.num_bframes)
-        intra_period.num_pframes = nPFrames;
+    DEBUG_PRINT_LOW("venc_set_idr_period: nIDRPeriod: %u", (unsigned int)nIDRPeriod);
     control.id = V4L2_CID_MPEG_VIDC_VIDEO_IDR_PERIOD;
     control.value = nIDRPeriod;
-
     rc = ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control);
-
     if (rc) {
         DEBUG_PRINT_ERROR("Failed to set control, id %#x, value %d", control.id, control.value);
         return false;
     }
-
     idrperiod.idrperiod = nIDRPeriod;
+
     return true;
 }
 
@@ -6382,7 +6467,7 @@ bool venc_dev::venc_get_temporal_layer_caps(OMX_U32 *nMaxLayers,
 }
 
 bool venc_dev::venc_check_for_hybrid_hp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE ePattern) {
-    //Hybrid HP is only for H264 and VBR
+    //Hybrid HP is only for H264 and CFR
     if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264) {
         DEBUG_PRINT_LOW("TemporalLayer: Hybrid HierP is not supported for non H264");
         return false;
@@ -6393,8 +6478,10 @@ bool venc_dev::venc_check_for_hybrid_hp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTER
         return false;
     }
 
-    if (rate_ctrl.rcmode != RC_VBR_CFR && rate_ctrl.rcmode != RC_VBR_VFR) {
-        DEBUG_PRINT_LOW("TemporalLayer: RC must be VBR for Hybrid");
+    if (rate_ctrl.rcmode != V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_CFR &&
+        rate_ctrl.rcmode != V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_CBR_CFR &&
+        rate_ctrl.rcmode != V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_MBR_CFR) {
+        DEBUG_PRINT_LOW("TemporalLayer: RC must be CFR for Hybrid");
         return false;
     }
 

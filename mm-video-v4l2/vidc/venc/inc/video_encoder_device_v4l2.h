@@ -325,6 +325,7 @@ class venc_dev
         bool venc_get_dimensions(OMX_U32 portIndex, OMX_U32 *w, OMX_U32 *h);
         bool venc_loaded_start(void);
         bool venc_loaded_stop(void);
+        bool venc_handle_empty_eos_buffer(void);
         bool venc_loaded_start_done(void);
         bool venc_loaded_stop_done(void);
         bool venc_is_video_session_supported(unsigned long width, unsigned long height);
@@ -353,7 +354,7 @@ class venc_dev
         OMX_ERRORTYPE venc_set_temporal_settings(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
         void venc_copy_temporal_settings(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
         bool venc_get_output_log_flag();
-        int venc_output_log_buffers(const char *buffer_addr, int buffer_len);
+        int venc_output_log_buffers(const char *buffer_addr, int buffer_len, uint64_t timestamp);
         int venc_input_log_buffers(OMX_BUFFERHEADERTYPE *buffer, int fd, int plane_offset,
                         unsigned long inputformat);
         int venc_extradata_log_buffers(char *buffer_addr);
@@ -486,7 +487,7 @@ class venc_dev
         void venc_config_print();
         bool venc_set_slice_delivery_mode(OMX_U32 enable);
         bool venc_set_extradata(OMX_U32 extra_data, OMX_BOOL enable);
-        bool venc_set_idr_period(OMX_U32 nPFrames, OMX_U32 nIDRPeriod);
+        bool venc_set_idr_period(OMX_U32 nIDRPeriod);
         bool venc_reconfigure_intra_period();
         bool venc_reconfigure_intra_refresh_period();
         bool venc_reconfig_reqbufs();
