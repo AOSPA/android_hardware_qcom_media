@@ -274,6 +274,10 @@ struct msm_venc_temporal_layers {
     OMX_U32 nTemporalLayerBitrateFraction[OMX_VIDEO_ANDROID_MAXTEMPORALLAYERS];
 };
 
+struct msm_venc_low_latency {
+    unsigned int enable;
+};
+
 enum v4l2_ports {
     CAPTURE_PORT,
     OUTPUT_PORT,
@@ -369,6 +373,7 @@ class venc_dev
                         unsigned long inputformat);
         int venc_extradata_log_buffers(char *buffer_addr);
         bool venc_set_bitrate_type(OMX_U32 type);
+        bool venc_enable_low_latency();
 
 #ifdef _VQZIP_
         class venc_dev_vqzip
@@ -519,6 +524,7 @@ class venc_dev
         struct msm_venc_color_space         color_space;
         msm_venc_temporal_layers            temporal_layers_config;
         bool m_hypervisor;
+        struct msm_venc_low_latency         low_latency;
 
         bool venc_set_profile_level(OMX_U32 eProfile,OMX_U32 eLevel);
         bool venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames);
