@@ -2701,6 +2701,12 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 }
                 break;
             }
+        case OMX_QTIIndexParamColorSpaceConversion:
+            {
+                QOMX_ENABLETYPE *pParam = (QOMX_ENABLETYPE *)paramData;
+                csc_enable = pParam->bEnable;
+                DEBUG_PRINT_INFO("CSC settings: Enabled : %d ", pParam->bEnable);
+            }
         default:
             DEBUG_PRINT_ERROR("ERROR: Unsupported parameter in venc_set_param: %u",
                     index);
@@ -2901,6 +2907,12 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                 }
 
                 venc_copy_temporal_settings(temporalParams);
+
+                // Set temporal layers with these settings
+                if (!venc_reconfigure_temporal_settings()) {
+                    DEBUG_PRINT_ERROR("Reconfiguring temporal settings failed");
+                    return false;
+                }
 
                 break;
             }
@@ -3359,6 +3371,12 @@ unsigned venc_dev::venc_start(void)
     if (!venc_reconfigure_temporal_settings()) {
         DEBUG_PRINT_ERROR("Reconfiguring temporal settings failed");
         return 1;
+    }
+
+    // Note HP settings could change GOP structure
+    if (!venc_set_intra_period(intra_period.num_pframes, intra_period.num_bframes)) {
+        DEBUG_PRINT_ERROR("TemporalLayer: Failed to set nPframes/nBframes");
+        return OMX_ErrorUndefined;
     }
 
     // If Hybrid HP is enable, LTR needs to be reset
@@ -3902,7 +3920,6 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                     }
 
                     if (!streaming[OUTPUT_PORT]) {
-                        unsigned int is_csc_enabled = 0;
                         ColorMetaData colorData= {};
                         // Moment of truth... actual colorspace is known here..
                         if (getMetaData(handle, GET_COLOR_METADATA, &colorData) == 0) {
@@ -3949,23 +3966,10 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         DEBUG_PRINT_INFO("color_space.primaries %d colorData.colorPrimaries %d, is_csc_custom_matrix_enabled=%d",
                                          color_space.primaries, colorData.colorPrimaries, is_csc_custom_matrix_enabled);
 
-                        bool is_color_space_601fr = (colorData.colorPrimaries == ColorPrimaries_BT601_6_525) &&
-                                                    (colorData.range == Range_Full) &&
-                                                    (colorData.transfer == Transfer_SMPTE_170M) &&
-                                                    (colorData.matrixCoefficients == MatrixCoEff_BT601_6_525);
-
-                        if (is_color_space_601fr &&
-                            color_space.primaries == ColorPrimaries_BT709_5)
-                        {
-                            DEBUG_PRINT_INFO("Enable CSC from BT601 to BT709 supported.");
-                            is_csc_enabled = 1;
-                        }
-
-                        // If CSC is enabled, then set control with colorspace from gralloc metadata
-                        if (is_csc_enabled) {
+                        if (csc_enable) {
                             struct v4l2_control control;
 
-                            /* Set 601FR as the Color Space. When we set CSC, this will be passed to
+                            /* Set Camera Color Space. When we set CSC, this will be passed to
                                fimrware as the InputPrimaries */
                             venc_set_colorspace(colorData.colorPrimaries, colorData.range,
                                                 colorData.transfer, colorData.matrixCoefficients);
@@ -3975,18 +3979,21 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                             if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
                                 DEBUG_PRINT_ERROR("venc_empty_buf: Failed to set VPE CSC");
                             }
-                            if (is_csc_custom_matrix_enabled) {
-                                control.id = V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_CUSTOM_MATRIX;
-                                control.value = 1;
-                                if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
-                                    DEBUG_PRINT_ERROR("venc_empty_buf: Failed to enable VPE CSC custom matrix");
-                                } else {
-                                    DEBUG_PRINT_INFO("venc_empty_buf: Enabled VPE CSC custom matrix");
-                                    colorData.colorPrimaries =  ColorPrimaries_BT709_5;
-                                    colorData.range = Range_Limited;
-                                    colorData.transfer = Transfer_sRGB;
-                                    colorData.matrixCoefficients = MatrixCoEff_BT709_5;
+                            else {
+                                if (is_csc_custom_matrix_enabled) {
+                                    control.id = V4L2_CID_MPEG_VIDC_VIDEO_VPE_CSC_CUSTOM_MATRIX;
+                                    control.value = 1;
+                                    if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
+                                        DEBUG_PRINT_ERROR("venc_empty_buf: Failed to enable VPE CSC custom matrix");
+                                    } else {
+                                        DEBUG_PRINT_INFO("venc_empty_buf: Enabled VPE CSC custom matrix");
+                                    }
                                 }
+                                /* Change Colorspace to 709*/
+                                colorData.colorPrimaries =  ColorPrimaries_BT709_5;
+                                colorData.range = Range_Limited;
+                                colorData.transfer = Transfer_sRGB;
+                                colorData.matrixCoefficients = MatrixCoEff_BT709_5;
                             }
                         }
 
@@ -6534,7 +6541,7 @@ OMX_ERRORTYPE venc_dev::venc_set_hp(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE
         return OMX_ErrorUnsupportedSetting;
     }
 
-    maxLayerCount = control.value;
+    maxLayerCount = control.value + 1;
 
     control.id = V4L2_CID_MPEG_VIDC_VIDEO_HIER_P_NUM_LAYERS;
     control.value = temporal_settings.nPLayerCountActual - 1;
@@ -6731,8 +6738,8 @@ bool venc_dev::venc_validate_temporal_settings() {
         return false;
     }
 
-    if (rate_ctrl.rcmode == V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_OFF) {
-        DEBUG_PRINT_HIGH("TemporalLayer: Hier layers cannot be enabled when RC is off");
+    if (rate_ctrl.rcmode != V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_VBR_CFR) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Hier layers cannot be enabled when RC is not VBR_CFR");
         return false;
     }
 
@@ -6822,12 +6829,6 @@ OMX_ERRORTYPE venc_dev::venc_set_temporal_settings(OMX_VIDEO_PARAM_ANDROID_TEMPO
             return OMX_ErrorUnsupportedSetting;
         }
         memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
-    }
-
-    // Note HP settings could change GOP structure
-    if (!venc_set_intra_period(intra_period.num_pframes, intra_period.num_bframes)) {
-        DEBUG_PRINT_ERROR("TemporalLayer: Failed to set nPframes/nBframes");
-        return OMX_ErrorUndefined;
     }
 
     return OMX_ErrorNone;
