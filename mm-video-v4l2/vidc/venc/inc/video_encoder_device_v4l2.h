@@ -337,6 +337,7 @@ class venc_dev
         bool venc_get_temporal_layer_caps(OMX_U32 * /*nMaxLayers*/,
                 OMX_U32 * /*nMaxBLayers*/, OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE */*SupportedPattern*/);
         OMX_ERRORTYPE venc_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVELTYPE *profileLevelType);
+        bool venc_get_supported_color_format(unsigned index, OMX_U32 *colorFormat);
         bool venc_check_for_hybrid_hp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE ePattern);
         bool venc_check_for_hierp(OMX_VIDEO_ANDROID_TEMPORALLAYERINGPATTERNTYPE ePattern);
         int venc_find_hier_type(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
@@ -462,6 +463,7 @@ class venc_dev
         OMX_BOOL                            downscalar_enabled;
         bool client_req_disable_bframe;
         bool client_req_disable_temporal_layers;
+        bool client_req_turbo_mode;
 
         bool venc_query_cap(struct v4l2_queryctrl &cap);
         bool venc_validate_range(OMX_S32 id, OMX_S32 val);
@@ -489,6 +491,7 @@ class venc_dev
         bool venc_reconfigure_intra_refresh_period();
         bool venc_reconfig_reqbufs();
         bool venc_set_vpe_rotation(OMX_S32 rotation_angle);
+        bool venc_set_mirror(OMX_U32 mirror);
         bool venc_set_ltrmode(OMX_U32 enable, OMX_U32 count);
         bool venc_set_useltr(OMX_U32 frameIdx);
         bool venc_set_markltr(OMX_U32 frameIdx);

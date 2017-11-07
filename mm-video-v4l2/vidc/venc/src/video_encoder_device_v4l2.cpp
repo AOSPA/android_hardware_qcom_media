@@ -143,11 +143,12 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     memset(&ltrinfo, 0, sizeof(ltrinfo));
     memset(&fd_list, 0, sizeof(fd_list));
     sess_priority.priority = 1;
-    operating_rate = 0;
+    operating_rate = 30;
     memset(&color_space, 0x0, sizeof(color_space));
     memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
     client_req_disable_bframe   = false;
     client_req_disable_temporal_layers  = false;
+    client_req_turbo_mode  = false;
 
 
     Platform::Config::getInt32(Platform::vidc_enc_log_in,
@@ -1028,6 +1029,46 @@ OMX_ERRORTYPE venc_dev::venc_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILE
     DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported for Input port returned Profile:%u, Level:%u",
             (unsigned int)profileLevelType->eProfile, (unsigned int)profileLevelType->eLevel);
     return eRet;
+}
+
+bool venc_dev::venc_get_supported_color_format(unsigned index, OMX_U32 *colorFormat) {
+#ifdef _UBWC_
+    //we support following formats
+    //index 0 - Compressed (UBWC) Venus flavour of YUV420SP
+    //index 1 - Venus flavour of YUV420SP
+    //index 2 - Compressed (UBWC) TP10 (10bit packed)
+    //index 3 - Compressed (UBWC) Venus flavour of RGBA8888
+    //index 4 - Venus flavour of RGBA8888
+    //index 5 - opaque which internally maps to YUV420SP.
+    //index 6 - vannilla YUV420SP
+    //this can be extended in the future
+    int supportedFormats[] = {
+        [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed,
+        [1] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m,
+        [2] = QOMX_COLOR_FormatYVU420SemiPlanar,
+        [3] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed,
+        [4] = QOMX_COLOR_Format32bitRGBA8888Compressed,
+        [5] = QOMX_COLOR_Format32bitRGBA8888,
+        [6] = QOMX_COLOR_FormatAndroidOpaque,
+        [7] = OMX_COLOR_FormatYUV420SemiPlanar,
+    };
+#else
+    //we support two formats
+    //index 0 - Venus flavour of YUV420SP
+    //index 1 - opaque which internally maps to YUV420SP.
+    //index 2 - vannilla YUV420SP
+    //this can be extended in the future
+    int supportedFormats[] = {
+        [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m,
+        [1] = QOMX_COLOR_FormatYVU420SemiPlanar,
+        [2] = QOMX_COLOR_FormatAndroidOpaque,
+        [3] = OMX_COLOR_FormatYUV420SemiPlanar,
+    }
+#endif
+    if (index > (sizeof(supportedFormats)/sizeof(*supportedFormats) - 1))
+        return false;
+    *colorFormat = supportedFormats[index];
+    return true;
 }
 
 OMX_ERRORTYPE venc_dev::allocate_extradata(struct extradata_buffer_info *extradata_info, int flags)
@@ -2711,6 +2752,17 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
 
                 break;
             }
+        case OMX_IndexConfigCommonMirror:
+            {
+                OMX_CONFIG_MIRRORTYPE *mirror = (OMX_CONFIG_MIRRORTYPE*) configData;
+                DEBUG_PRINT_LOW("venc_set_param: OMX_IndexConfigCommonMirror");
+
+                if (venc_set_mirror(mirror->eMirror) == false) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_IndexConfigCommonMirror failed");
+                    return false;
+                }
+                break;
+            }
         case OMX_IndexConfigCommonRotate:
             {
                 OMX_CONFIG_ROTATIONTYPE *config_rotation =
@@ -2861,7 +2913,7 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
         case OMX_IndexConfigOperatingRate:
             {
                 OMX_PARAM_U32TYPE *rate = (OMX_PARAM_U32TYPE *)configData;
-                DEBUG_PRINT_LOW("Set_config: operating rate %d", rate->nU32);
+                DEBUG_PRINT_LOW("Set_config: operating rate %u", rate->nU32);
                 if (!venc_set_operatingrate(rate->nU32)) {
                     DEBUG_PRINT_ERROR("Failed to set operating rate");
                     return false;
@@ -3205,6 +3257,10 @@ unsigned venc_dev::venc_start(void)
     if (vqzip_sei_info.enabled && !venc_set_vqzip_defaults())
         return 1;
 
+    if (!venc_set_priority(sess_priority.priority)) {
+        DEBUG_PRINT_ERROR("Failed to set priority");
+        return 1;
+    }
     // Client can set intra refresh period in terms of frames.
     // This requires reconfiguration on port redefinition as
     // mbcount for IR depends on encode resolution.
@@ -3375,7 +3431,7 @@ void venc_dev::venc_config_print()
 
     DEBUG_PRINT_HIGH("ENC_CONFIG: Peak bitrate: %d", peak_bitrate.peakbitrate);
 
-    DEBUG_PRINT_HIGH("ENC_CONFIG: Session Priority: %u", sess_priority.priority);
+    DEBUG_PRINT_HIGH("ENC_CONFIG: Session Priority: %s", sess_priority.priority ? "NonRealTime" : "RealTime");
 
     DEBUG_PRINT_HIGH("ENC_CONFIG: ROI : %u", m_roi_enabled);
 
@@ -4814,7 +4870,7 @@ bool venc_dev::venc_reconfigure_intra_period()
         isValidFps = true;
     }
 
-    if ((operating_rate >> 16) <= VENC_BFRAME_MAX_FPS) {
+    if (operating_rate <= VENC_BFRAME_MAX_FPS) {
         isValidOpRate = true;
     }
 
@@ -5717,6 +5773,26 @@ bool venc_dev::venc_set_markltr(OMX_U32 frameIdx)
     return true;
 }
 
+bool venc_dev::venc_set_mirror(OMX_U32 mirror)
+{
+    DEBUG_PRINT_LOW("venc_set_mirror");
+    int rc = true;
+    struct v4l2_control control;
+
+    control.id = V4L2_CID_MPEG_VIDC_VIDEO_FLIP;
+    control.value = mirror;
+
+    rc = ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control);
+    if (rc) {
+        DEBUG_PRINT_ERROR("Failed to set mirror %d", rc);
+        return false;
+    }
+
+    DEBUG_PRINT_LOW("Success IOCTL set control for id=%x, val=%d",
+                    control.id, control.value);
+    return true;
+}
+
 bool venc_dev::venc_set_vpe_rotation(OMX_S32 rotation_angle)
 {
     DEBUG_PRINT_LOW("venc_set_vpe_rotation: rotation angle = %d", (int)rotation_angle);
@@ -6102,6 +6178,7 @@ bool venc_dev::venc_set_vpx_error_resilience(OMX_BOOL enable)
 bool venc_dev::venc_set_priority(OMX_U32 priority) {
     struct v4l2_control control;
 
+    DEBUG_PRINT_LOW("venc_set_priority: %s", priority ? "NonRealTime" : "RealTime");
     control.id = V4L2_CID_MPEG_VIDC_VIDEO_PRIORITY;
     if (priority == 0)
         control.value = V4L2_MPEG_VIDC_VIDEO_PRIORITY_REALTIME_ENABLE;
@@ -6122,8 +6199,8 @@ bool venc_dev::venc_set_operatingrate(OMX_U32 rate) {
     control.id = V4L2_CID_MPEG_VIDC_VIDEO_OPERATING_RATE;
     control.value = rate;
 
-    DEBUG_PRINT_LOW("venc_set_operating_rate: %d fps", rate >> 16);
-    DEBUG_PRINT_LOW("Calling IOCTL set control for id=%d, val=%d", control.id, control.value);
+    DEBUG_PRINT_LOW("venc_set_operating_rate: %u fps", rate >> 16);
+    DEBUG_PRINT_LOW("Calling IOCTL set control for id=%d, val=%u", control.id, control.value);
 
     if(ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control)) {
         hw_overload = errno == EBUSY;
@@ -6131,8 +6208,15 @@ bool venc_dev::venc_set_operatingrate(OMX_U32 rate) {
                 rate >> 16, hw_overload ? "HW overload" : strerror(errno));
         return false;
     }
-    operating_rate = rate;
-    DEBUG_PRINT_LOW("Operating Rate Set = %d fps",  rate >> 16);
+    if (rate == QOMX_VIDEO_HIGH_PERF_OPERATING_MODE) {
+        DEBUG_PRINT_LOW("Turbo mode requested");
+        client_req_turbo_mode = true;
+    } else {
+        operating_rate = rate >> 16;
+        client_req_turbo_mode = false;
+        DEBUG_PRINT_LOW("Operating Rate Set = %d fps",  rate >> 16);
+    }
+
     return true;
 }
 
@@ -6537,13 +6621,31 @@ bool venc_dev::venc_convert_abs2cum_bitrate(QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE 
 
 bool venc_dev::venc_validate_temporal_settings() {
 
-    if (((m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den) < 60) && ((operating_rate >> 16) < 60)) {
-        DEBUG_PRINT_HIGH("TemporalLayer: Invalid FPS/operating rate settings for Hier layers");
+    bool fps_30_plus = false;
+    bool fps_60_plus = false;
+    bool res_1080p_plus = false;
+
+    fps_30_plus = (((m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den) > 30) || ((operating_rate) > 30));
+    fps_60_plus = (((m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den) > 60) || ((operating_rate) > 60));
+    res_1080p_plus = ((m_sVenc_cfg.input_width * m_sVenc_cfg.input_height / 256) > (1920 * 1088 / 256));
+
+    if (res_1080p_plus == false && fps_60_plus == false) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Hier layers cannot be enabled for res <= 1080p & fps <= 60");
+        return false;
+    }
+
+    if (res_1080p_plus == true && fps_30_plus == false) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Hier layers cannot be enabled for res > 1080p & fps <= 30");
         return false;
     }
 
     if (intra_period.num_bframes > 0) {
         DEBUG_PRINT_HIGH("TemporalLayer: Invalid B-frame settings for Hier layers");
+        return false;
+    }
+
+    if (rate_ctrl.rcmode == V4L2_CID_MPEG_VIDC_VIDEO_RATE_CONTROL_OFF) {
+        DEBUG_PRINT_HIGH("TemporalLayer: Hier layers cannot be enabled when RC is off");
         return false;
     }
 

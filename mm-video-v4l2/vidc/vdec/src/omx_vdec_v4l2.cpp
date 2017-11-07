@@ -833,6 +833,7 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     m_smoothstreaming_width = 0;
     m_smoothstreaming_height = 0;
     m_decode_order_mode = false;
+    m_client_req_turbo_mode = false;
     is_q6_platform = false;
     m_input_pass_buffer_fd = false;
     memset(&m_extradata_info, 0, sizeof(m_extradata_info));
@@ -5178,7 +5179,14 @@ OMX_ERRORTYPE  omx_vdec::set_config(OMX_IN OMX_HANDLETYPE      hComp,
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_OPERATING_RATE;
         control.value = rate->nU32;
 
-        operating_frame_rate = rate->nU32 >> 16;
+        if (rate->nU32 == QOMX_VIDEO_HIGH_PERF_OPERATING_MODE) {
+            DEBUG_PRINT_LOW("Turbo mode requested");
+            m_client_req_turbo_mode = true;
+        } else {
+            operating_frame_rate = rate->nU32 >> 16;
+            m_client_req_turbo_mode = false;
+            DEBUG_PRINT_LOW("Operating Rate Set = %d fps",  operating_frame_rate);
+        }
 
         if (ioctl(drv_ctx.video_driver_fd, VIDIOC_S_CTRL, &control)) {
             ret = errno == -EBUSY ? OMX_ErrorInsufficientResources :
@@ -6954,6 +6962,8 @@ OMX_ERRORTYPE  omx_vdec::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
         (unsigned long)temp_buffer->offset;
     plane.reserved[0] = temp_buffer->pmem_fd;
     plane.reserved[1] = temp_buffer->offset;
+    plane.reserved[3] = (unsigned long)buffer->pMarkData;
+    plane.reserved[4] = (unsigned long)buffer->hMarkTargetComponent;
     plane.data_offset = 0;
     buf.m.planes = &plane;
     buf.length = 1;
@@ -8211,6 +8221,9 @@ int omx_vdec::async_message_process (void *context, void* message)
                    ((omxhdr - omx->m_out_mem_ptr) < (int)omx->drv_ctx.op_buf.actualcount) &&
                    (((struct vdec_output_frameinfo *)omxhdr->pOutputPortPrivate
                      - omx->drv_ctx.ptr_respbuffer) < (int)omx->drv_ctx.op_buf.actualcount)) {
+
+               omxhdr->pMarkData = (OMX_PTR)(unsigned long)plane[0].reserved[3];
+               omxhdr->hMarkTargetComponent = (OMX_HANDLETYPE)(unsigned long)plane[0].reserved[4];
 
                if (vdec_msg->msgdata.output_frame.len <=  omxhdr->nAllocLen) {
                    omxhdr->nFilledLen = vdec_msg->msgdata.output_frame.len;
@@ -11113,7 +11126,7 @@ OMX_BUFFERHEADERTYPE* omx_vdec::allocate_color_convert_buf::get_il_buf_hdr()
 
             DEBUG_PRINT_INFO("C2D: Start color convertion");
             status = c2dcc.convertC2D(omx->drv_ctx.ptr_outputbuffer[index].pmem_fd,
-                                      omx->m_out_mem_ptr->pBuffer, bufadd->pBuffer,
+                                      bufadd->pBuffer, bufadd->pBuffer,
                                       pmem_fd[index], pmem_baseaddress[index],
                                       pmem_baseaddress[index]);
 
