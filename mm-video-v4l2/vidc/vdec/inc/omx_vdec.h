@@ -485,16 +485,21 @@ struct video_decoder_capability {
 struct debug_cap {
     bool in_buffer_log;
     bool out_buffer_log;
+    bool out_cc_buffer_log;
     bool out_meta_buffer_log;
     char infile_name[PROPERTY_VALUE_MAX + 36];
     char outfile_name[PROPERTY_VALUE_MAX + 36];
+    char ccoutfile_name[PROPERTY_VALUE_MAX + 36];
     char out_ymetafile_name[PROPERTY_VALUE_MAX + 36];
     char out_uvmetafile_name[PROPERTY_VALUE_MAX + 36];
     char log_loc[PROPERTY_VALUE_MAX];
     FILE *infile;
     FILE *outfile;
+    FILE *ccoutfile;
     FILE *out_ymeta_file;
     FILE *out_uvmeta_file;
+    int64_t session_id;
+    int seq_count;
 };
 
 struct dynamic_buf_list {
@@ -656,8 +661,6 @@ class omx_vdec: public qc_omx_component
         pthread_t msg_thread_id;
         pthread_t async_thread_id;
         bool is_component_secure();
-        void buf_ref_add(int nPortIndex);
-        void buf_ref_remove();
         OMX_BUFFERHEADERTYPE* get_omx_output_buffer_header(int index);
         OMX_ERRORTYPE set_dpb(bool is_split_mode, int dpb_color_format);
         OMX_ERRORTYPE decide_dpb_buffer_mode(bool is_downscalar_enabled);
@@ -1181,7 +1184,6 @@ class omx_vdec: public qc_omx_component
 
         //variables to handle dynamic buffer mode
         bool dynamic_buf_mode;
-        struct dynamic_buf_list *out_dynamic_list;
         OMX_U32 m_reconfig_width;
         OMX_U32 m_reconfig_height;
         bool m_smoothstreaming_mode;
@@ -1272,8 +1274,9 @@ class omx_vdec: public qc_omx_component
         allocate_color_convert_buf client_buffers;
         struct video_decoder_capability m_decoder_capability;
         struct debug_cap m_debug;
-        int log_input_buffers(const char *, int);
+        int log_input_buffers(const char *, int, uint64_t);
         int log_output_buffers(OMX_BUFFERHEADERTYPE *);
+        int log_cc_output_buffers(OMX_BUFFERHEADERTYPE *);
         void send_codec_config();
         OMX_TICKS m_last_rendered_TS;
         volatile int32_t m_queued_codec_config_count;

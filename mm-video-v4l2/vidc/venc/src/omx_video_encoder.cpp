@@ -2167,6 +2167,11 @@ OMX_U32 omx_venc::dev_set_message_thread_id(pthread_t tid)
     return handle->venc_set_message_thread_id(tid);
 }
 
+bool omx_venc::dev_handle_empty_eos_buffer(void)
+{
+    return handle->venc_handle_empty_eos_buffer();
+}
+
 bool omx_venc::dev_use_buf(unsigned port)
 {
     return handle->allocate_extradata(port);
@@ -2292,6 +2297,15 @@ bool omx_venc::dev_get_buf_req(OMX_U32 *min_buff_count,
             buff_size,
             port);
 
+}
+
+bool omx_venc::dev_get_dimensions(OMX_U32 port,
+        OMX_U32 *width,
+        OMX_U32 *height)
+{
+    return handle->venc_get_dimensions(port,
+            width,
+            height);
 }
 
 bool omx_venc::is_streamon_done(OMX_U32 port)
@@ -2484,9 +2498,10 @@ bool omx_venc::dev_get_output_log_flag()
     return handle->venc_get_output_log_flag();
 }
 
-int omx_venc::dev_output_log_buffers(const char *buffer, int bufferlen)
+int omx_venc::dev_output_log_buffers(const char *buffer,
+                  int bufferlen, uint64_t timestamp)
 {
-    return handle->venc_output_log_buffers(buffer, bufferlen);
+    return handle->venc_output_log_buffers(buffer, bufferlen, timestamp);
 }
 
 int omx_venc::dev_extradata_log_buffers(char *buffer)
