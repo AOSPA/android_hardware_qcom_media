@@ -62,6 +62,9 @@ libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/qcom/display
 libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/adreno
 libmm-vdec-inc          += $(TOP)/frameworks/native/include/media/openmax
 libmm-vdec-inc          += $(TOP)/frameworks/native/include/media/hardware
+libmm-vdec-inc          += frameworks/native/libs/nativewindow/include
+libmm-vdec-inc          += frameworks/native/libs/nativebase/include
+libmm-vdec-inc          += frameworks/native/libs/arect/include
 libmm-vdec-inc      	+= $(TOP)/hardware/qcom/media/libc2dcolorconvert
 libmm-vdec-inc      	+= $(TARGET_OUT_HEADERS)/mm-video/SwVdec
 libmm-vdec-inc      	+= $(TARGET_OUT_HEADERS)/mm-video/swvdec
@@ -130,8 +133,7 @@ LOCAL_C_INCLUDES              += $(libmm-vdec-inc)
 LOCAL_ADDITIONAL_DEPENDENCIES := $(libmm-vdec-add-dep)
 
 LOCAL_PRELINK_MODULE          := false
-LOCAL_SHARED_LIBRARIES        := liblog libcutils libc2dcolorconvert
-LOCAL_SHARED_LIBRARIES        += libswvdec
+LOCAL_SHARED_LIBRARIES        := liblog libcutils libc2dcolorconvert libswvdec
 
 LOCAL_SRC_FILES               := src/omx_swvdec.cpp
 LOCAL_SRC_FILES               += src/omx_swvdec_utils.cpp
