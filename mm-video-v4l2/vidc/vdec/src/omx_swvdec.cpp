@@ -2860,14 +2860,23 @@ OMX_ERRORTYPE omx_swvdec::get_port_definition(
         p_port_def->bEnabled           = m_port_ip.enabled;
         p_port_def->bPopulated         = m_port_ip.populated;
 
+        // VTS uses input port dimensions to set OP dimensions
+        if ((retval = get_frame_dimensions_swvdec()) != OMX_ErrorNone)
+        {
+            goto get_port_definition_exit;
+        }
+
+        p_port_def->format.video.nFrameWidth  = m_frame_dimensions.width;
+        p_port_def->format.video.nFrameHeight = m_frame_dimensions.height;
+
         OMX_SWVDEC_LOG_HIGH("port index %d: "
-                            "count actual %d, count min %d, size %d",
+                            "count actual %d, count min %d, size %d, %d x %d",
                             p_port_def->nPortIndex,
                             p_port_def->nBufferCountActual,
                             p_port_def->nBufferCountMin,
-                            p_port_def->nBufferSize);
-
-        // frame dimensions & attributes don't apply to input port
+                            p_port_def->nBufferSize,
+                            p_port_def->format.video.nFrameWidth,
+                            p_port_def->format.video.nFrameHeight);
 
         p_port_def->format.video.eColorFormat       = OMX_COLOR_FormatUnused;
         p_port_def->format.video.eCompressionFormat = m_omx_video_codingtype;
@@ -4651,7 +4660,19 @@ OMX_ERRORTYPE omx_swvdec::flush(unsigned int port_index)
         {
             m_port_ip.flush_inprogress = OMX_TRUE;
 
-            // no separate SwVdec flush type for input
+            //for VTS test case IP flush , trigger flush all
+            // for IP flush, similar behavior is for hwcodecs
+            m_port_ip.flush_inprogress = OMX_TRUE;
+            m_port_op.flush_inprogress = OMX_TRUE;
+
+            swvdec_flush_type = SWVDEC_FLUSH_TYPE_ALL;
+
+            if ((retval_swvdec = swvdec_flush(m_swvdec_handle,
+                                              swvdec_flush_type)) !=
+                SWVDEC_STATUS_SUCCESS)
+            {
+                retval = retval_swvdec2omx(retval_swvdec);
+            }
         }
         else if (port_index == OMX_CORE_PORT_INDEX_OP)
         {
@@ -4799,25 +4820,74 @@ void omx_swvdec::ion_flush_op(unsigned int index)
 {
     if (index < m_port_op.def.nBufferCountActual)
     {
+        int fd = -EINVAL;
+        int rc = -EINVAL;
+
         struct vdec_bufferpayload *p_buffer_payload =
             &m_buffer_array_op[index].buffer_payload;
 
-        if(p_buffer_payload)
+        struct ion_fd_data     fd_data;
+        struct ion_flush_data  flush_data;
+        struct ion_custom_data custom_data;
+
+        memset(&fd_data,     0, sizeof(fd_data));
+        memset(&flush_data,  0, sizeof(flush_data));
+        memset(&custom_data, 0, sizeof(custom_data));
+
+        if ((fd = open("/dev/ion", O_RDONLY)) < 0)
         {
-            if(p_buffer_payload->bufferaddr != NULL)
-            {
-                __builtin___clear_cache(reinterpret_cast<char*>((size_t*)p_buffer_payload->bufferaddr),
-                    reinterpret_cast<char*>((size_t*)p_buffer_payload->bufferaddr +p_buffer_payload->buffer_len));
-            }
+            OMX_SWVDEC_LOG_ERROR("failed to open /dev/ion, error %s",
+                                 strerror(errno));
+
+            goto ion_flush_op_exit;
         }
+
+        fd_data.fd = p_buffer_payload->pmem_fd;
+
+        rc = ioctl(fd, ION_IOC_IMPORT, &fd_data);
+
+        if (rc)
+        {
+            OMX_SWVDEC_LOG_ERROR("ioctl() for import failed; fd %d",
+                                 fd_data.fd);
+
+            close(fd);
+            goto ion_flush_op_exit;
+        }
+
+        flush_data.handle = fd_data.handle;
+
+        flush_data.fd     = p_buffer_payload->pmem_fd;
+        flush_data.vaddr  = p_buffer_payload->bufferaddr;
+        flush_data.length = p_buffer_payload->buffer_len;
+
+        custom_data.cmd = ION_IOC_CLEAN_CACHES;
+        custom_data.arg = (unsigned long) &flush_data;
+
+        OMX_SWVDEC_LOG_LOW("handle %d, fd %d, vaddr %p, length %d",
+                           flush_data.handle,
+                           flush_data.fd,
+                           flush_data.vaddr,
+                           flush_data.length);
+
+        rc = ioctl(fd, ION_IOC_CUSTOM, &custom_data);
+
+        if (rc < 0)
+        {
+            OMX_SWVDEC_LOG_ERROR("ioctl() for clean cache failed");
+        }
+
+        close(fd);
     }
     else
     {
         OMX_SWVDEC_LOG_ERROR("buffer index '%d' invalid", index);
     }
 
+ion_flush_op_exit:
     return;
 }
+
 
 /**
  * ----------------------------
