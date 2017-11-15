@@ -2498,6 +2498,12 @@ OMX_U32 omx_venc::dev_set_message_thread_id(pthread_t tid)
     return handle->venc_set_message_thread_id(tid);
 }
 
+OMX_U32 omx_venc::dev_handle_empty_eos_buffer(void)
+{
+    // do nothing in hw component
+    return 1;
+}
+
 bool omx_venc::dev_use_buf(void *buf_addr,unsigned port,unsigned index)
 {
     return handle->venc_use_buf(buf_addr,port,index);

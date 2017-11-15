@@ -3953,6 +3953,22 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
         }
     }
 
+    if (buffer->nFilledLen == 0 && (buffer->nFlags & OMX_BUFFERFLAG_EOS)) {
+        DEBUG_PRINT_LOW("Zero length EOS buffer");
+        OMX_U32 ret = dev_handle_empty_eos_buffer();
+        /*
+         * 0 - succeeded in sw compoent
+         * 1 - did nothing in hw component
+         * 2 - failed in sw component
+         */
+        if (ret == 2)
+            return OMX_ErrorHardware;
+        else if(ret == 0) {
+            post_event((unsigned long)buffer, 0, OMX_COMPONENT_GENERATE_EBD);
+            return OMX_ErrorNone;
+        }
+    }
+
     pending_input_buffers++;
     VIDC_TRACE_INT_LOW("ETB-pending", pending_input_buffers);
     if (input_flush_progress == true) {
