@@ -446,6 +446,11 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     OMX_INIT_STRUCT(&m_sParamLowLatency, QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE);
     m_sParamLowLatency.nNumFrames = 0;
 
+    OMX_INIT_STRUCT(&m_sParamColorSpaceConversion , QOMX_ENABLETYPE);
+    m_sParamColorSpaceConversion.bEnable = OMX_FALSE;
+
+    OMX_INIT_STRUCT(&m_sBaseLayerID, OMX_SKYPE_VIDEO_CONFIG_BASELAYERPID);
+
     m_state                   = OMX_StateLoaded;
     m_sExtraData = 0;
 
@@ -550,12 +555,6 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     portDefn->format.video.eColorFormat, portDefn->format.video.eCompressionFormat);
 
                 if (PORT_INDEX_IN == portDefn->nPortIndex) {
-                    if (!dev_is_video_session_supported(portDefn->format.video.nFrameWidth,
-                                portDefn->format.video.nFrameHeight)) {
-                        DEBUG_PRINT_ERROR("video session not supported");
-                        omx_report_unsupported_setting();
-                        return OMX_ErrorUnsupportedSetting;
-                    }
                     if (portDefn->nBufferCountActual > MAX_NUM_INPUT_BUFFERS) {
                         DEBUG_PRINT_ERROR("ERROR: (In_PORT) actual count (%u) exceeds max(%u)",
                                 (unsigned int)portDefn->nBufferCountActual, (unsigned int)MAX_NUM_INPUT_BUFFERS);
@@ -748,7 +747,7 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     }
 
                     DEBUG_PRINT_HIGH("AVC: BFrames: %u", (unsigned int)avc_param.nBFrames);
-                    avc_param.bEntropyCodingCABAC = (OMX_BOOL)(0);
+                    avc_param.bEntropyCodingCABAC = (OMX_BOOL)(1);
                     avc_param.nCabacInitIdc = 0;
                 } else {
                     if (pParam->nBFrames) {
@@ -1540,6 +1539,17 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     return OMX_ErrorUnsupportedSetting;
                 }
                 memcpy(&m_sParamLowLatency, paramData, sizeof(QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE));
+                break;
+            }
+        case OMX_QTIIndexParamColorSpaceConversion:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_ENABLETYPE);
+                if (!handle->venc_set_param(paramData,
+                            (OMX_INDEXTYPE)OMX_QTIIndexParamColorSpaceConversion)) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamLowLatencyMode failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sParamColorSpaceConversion, paramData, sizeof(QOMX_ENABLETYPE));
                 break;
             }
         case OMX_IndexParamVideoSliceFMO:
