@@ -1908,30 +1908,6 @@ int omx_vdec::update_resolution(int width, int height, int stride, int scan_line
     return format_changed;
 }
 
-OMX_ERRORTYPE omx_vdec::is_video_session_supported()
-{
-    if ((drv_ctx.video_resolution.frame_width *
-                drv_ctx.video_resolution.frame_height >
-                m_decoder_capability.max_width *
-                m_decoder_capability.max_height) ||
-            (drv_ctx.video_resolution.frame_width*
-             drv_ctx.video_resolution.frame_height <
-             m_decoder_capability.min_width *
-             m_decoder_capability.min_height)) {
-        DEBUG_PRINT_ERROR(
-                "Unsupported WxH = (%u)x(%u) supported range is min(%u)x(%u) - max(%u)x(%u)",
-                drv_ctx.video_resolution.frame_width,
-                drv_ctx.video_resolution.frame_height,
-                m_decoder_capability.min_width,
-                m_decoder_capability.min_height,
-                m_decoder_capability.max_width,
-                m_decoder_capability.max_height);
-        return OMX_ErrorUnsupportedSetting;
-    }
-    DEBUG_PRINT_HIGH("video session supported");
-    return OMX_ErrorNone;
-}
-
 int omx_vdec::log_input_buffers(const char *buffer_addr, int buffer_len, uint64_t timeStamp)
 {
     if (m_debug.in_buffer_log && !m_debug.infile) {
@@ -4002,9 +3978,6 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                            m_extradata_info.output_crop_rect.nWidth = rectangle.nWidth;
                                            m_extradata_info.output_crop_rect.nHeight = rectangle.nHeight;
 
-                                           eRet = is_video_session_supported();
-                                           if (eRet)
-                                               break;
                                            memset(&fmt, 0x0, sizeof(struct v4l2_format));
                                            fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
                                            fmt.fmt.pix_mp.height = (unsigned int)portDefn->format.video.nFrameHeight;
@@ -4133,9 +4106,6 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
 
                                            update_resolution(frameWidth, frameHeight,
                                                    frameWidth, frameHeight);
-                                           eRet = is_video_session_supported();
-                                           if (eRet)
-                                               break;
                                            if (is_down_scalar_enabled) {
                                                memset(&fmt, 0x0, sizeof(struct v4l2_format));
                                                fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -4165,6 +4135,8 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                                if (!is_down_scalar_enabled)
                                                    eRet = get_buffer_req(&drv_ctx.op_buf);
                                            }
+                                           if (eRet)
+                                               break;
                                        }
                                    }
                                    if (m_custom_buffersize.input_buffersize
@@ -8144,6 +8116,7 @@ int omx_vdec::async_message_process (void *context, void* message)
     struct v4l2_plane *plane = NULL;
     struct vdec_output_frameinfo *output_respbuf = NULL;
     int rc=1;
+    bool reconfig_event_sent = false;
     if (context == NULL || message == NULL) {
         DEBUG_PRINT_ERROR("FATAL ERROR in omx_vdec::async_message_process NULL Check");
         return -1;
@@ -8252,7 +8225,6 @@ int omx_vdec::async_message_process (void *context, void* message)
             break;
         case VDEC_MSG_RESP_OUTPUT_FLUSHED:
         case VDEC_MSG_RESP_OUTPUT_BUFFER_DONE:
-
            v4l2_buf_ptr = (v4l2_buffer*)vdec_msg->msgdata.output_frame.client_data;
            if (v4l2_buf_ptr == NULL || omx->m_out_mem_ptr == NULL ||
                v4l2_buf_ptr->index >= omx->drv_ctx.op_buf.actualcount) {
@@ -8326,7 +8298,7 @@ int omx_vdec::async_message_process (void *context, void* message)
 
                    if (vdec_msg->msgdata.output_frame.len) {
                        DEBUG_PRINT_LOW("Processing extradata");
-                       omx->handle_extradata(omxhdr);
+                       reconfig_event_sent = omx->handle_extradata(omxhdr);
 
                        if (omx->m_extradata_info.output_crop_updated) {
                            DEBUG_PRINT_LOW("Read FBD crop from output extra data");
@@ -8422,9 +8394,12 @@ int omx_vdec::async_message_process (void *context, void* message)
                                VENUS_Y_SCANLINES(COLOR_FMT_NV12_BPP10_UBWC, omx->drv_ctx.video_resolution.frame_height);
                         }
 
-                       omx->post_event(OMX_CORE_OUTPUT_PORT_INDEX,
-                                OMX_IndexConfigCommonOutputCrop,
-                                OMX_COMPONENT_GENERATE_PORT_RECONFIG);
+                       if(!reconfig_event_sent) {
+                           omx->post_event(OMX_CORE_OUTPUT_PORT_INDEX,
+                                           OMX_IndexConfigCommonOutputCrop,
+                                           OMX_COMPONENT_GENERATE_PORT_RECONFIG);
+                           reconfig_event_sent = true;
+                       }
                    }
 
                    if (omxhdr->nFilledLen)
@@ -8757,10 +8732,6 @@ OMX_ERRORTYPE omx_vdec::get_buffer_req(vdec_allocatorproperty *buffer_prop)
     } else {
         int extra_idx = 0;
 
-        eRet = is_video_session_supported();
-        if (eRet)
-            return eRet;
-
         buffer_prop->buffer_size = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
         buf_size = buffer_prop->buffer_size;
         extra_idx = EXTRADATA_IDX(drv_ctx.num_planes);
@@ -8825,10 +8796,12 @@ OMX_ERRORTYPE omx_vdec::set_buffer_req(vdec_allocatorproperty *buffer_prop)
         fmt.fmt.pix_mp.plane_fmt[0].sizeimage = buf_size;
 
         if (buffer_prop->buffer_type == VDEC_BUFFER_TYPE_INPUT) {
+            control.id = V4L2_CID_MIN_BUFFERS_FOR_OUTPUT;
             fmt.type =V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
             fmt.fmt.pix_mp.pixelformat = output_capability;
             ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_S_FMT, &fmt);
         } else if (buffer_prop->buffer_type == VDEC_BUFFER_TYPE_OUTPUT) {
+            control.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
             c_fmt.type =V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
             c_fmt.fmt.pix_mp.pixelformat = capture_capability;
             ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_G_FMT, &c_fmt);
@@ -9714,7 +9687,7 @@ void omx_vdec::get_preferred_hdr_info(HDRStaticInfo& finalHDRInfo)
     finalHDRInfo.sType1.mMaxFrameAverageLightLevel = (preferredHDRInfo.sType1.mMaxFrameAverageLightLevel != 0) ?
         preferredHDRInfo.sType1.mMaxFrameAverageLightLevel : defaultHDRInfo.sType1.mMaxFrameAverageLightLevel;
 }
-void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
+bool omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
 {
     OMX_OTHER_EXTRADATATYPE *p_extra = NULL, *p_sei = NULL, *p_vui = NULL, *p_client_extra = NULL;
     OMX_U8 *pBuffer = NULL;
@@ -9726,36 +9699,36 @@ void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
     OMX_U32 recovery_sei_flags = 1;
     int enable = OMX_InterlaceFrameProgressive;
     bool internal_hdr_info_changed_flag = false;
-    bool color_event = false;
+    bool reconfig_event_sent = false;
 
     int buf_index = p_buf_hdr - m_out_mem_ptr;
     if (buf_index >= drv_ctx.extradata_info.count) {
         DEBUG_PRINT_ERROR("handle_extradata: invalid index(%d) max(%d)",
                 buf_index, drv_ctx.extradata_info.count);
-        return;
+        return reconfig_event_sent;
     }
     struct msm_vidc_panscan_window_payload *panscan_payload = NULL;
 
     if (drv_ctx.ptr_outputbuffer[buf_index].bufferaddr == NULL) {
         DEBUG_PRINT_ERROR("handle_extradata: Error: Mapped output buffer address is NULL");
-        return;
+        return reconfig_event_sent;
     }
 
     if (!drv_ctx.extradata_info.uaddr) {
         DEBUG_PRINT_HIGH("NULL drv_ctx.extradata_info.uaddr");
-        return;
+        return reconfig_event_sent;
     }
     if (!secure_mode && (drv_ctx.extradata_info.buffer_size > (p_buf_hdr->nAllocLen - p_buf_hdr->nFilledLen)) ) {
         DEBUG_PRINT_ERROR("Error: Insufficient size allocated for extra-data");
         p_extra = NULL;
-        return;
+        return reconfig_event_sent;
     }
     if (!secure_mode) {
         pBuffer = (OMX_U8*)mmap(0, drv_ctx.ptr_outputbuffer[buf_index].buffer_len,
                     PROT_READ|PROT_WRITE, MAP_SHARED, drv_ctx.ptr_outputbuffer[buf_index].pmem_fd, 0);
         if (pBuffer == MAP_FAILED) {
             DEBUG_PRINT_ERROR("handle_extradata output buffer mmap failed - errno: %d", errno);
-            return;
+            return reconfig_event_sent;
         }
         p_extra = (OMX_OTHER_EXTRADATATYPE *)
             ((unsigned long)(pBuffer + p_buf_hdr->nOffset + p_buf_hdr->nFilledLen + 3)&(~3));
@@ -9773,7 +9746,7 @@ void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
     if (!secure_mode && ((OMX_U8*)p_extra > (pBuffer + p_buf_hdr->nAllocLen))) {
         p_extra = NULL;
         DEBUG_PRINT_ERROR("Error: out of bound memory access by p_extra");
-        return;
+        return reconfig_event_sent;
     }
     m_extradata_info.output_crop_updated = OMX_FALSE;
     OMX_OTHER_EXTRADATATYPE *data = (struct OMX_OTHER_EXTRADATATYPE *)p_extradata;
@@ -9788,7 +9761,7 @@ void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
             if (!secure_mode && ((OMX_U8*)p_extra > (pBuffer + p_buf_hdr->nAllocLen))) {
                 p_extra = NULL;
                 DEBUG_PRINT_ERROR("Error: out of bound memory access by p_extra");
-                return;
+                return reconfig_event_sent;
             }
 
             DEBUG_PRINT_LOW("handle_extradata: eType = 0x%x", data->eType);
@@ -9924,13 +9897,13 @@ void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
                         DEBUG_PRINT_ERROR("Panscan windows are more than supported\n");
                         DEBUG_PRINT_ERROR("Max supported = %d FW returned = %d\n",
                             MAX_PAN_SCAN_WINDOWS, panscan_payload->num_panscan_windows);
-                        return;
+                        return reconfig_event_sent;
                     }
                     break;
                 case MSM_VIDC_EXTRADATA_MPEG2_SEQDISP:
                 case MSM_VIDC_EXTRADATA_VUI_DISPLAY_INFO:
                 case MSM_VIDC_EXTRADATA_VPX_COLORSPACE_INFO:
-                    color_event = handle_color_space_info((void *)data->data);
+                    reconfig_event_sent |= handle_color_space_info((void *)data->data);
                     break;
                 case MSM_VIDC_EXTRADATA_S3D_FRAME_PACKING:
                     struct msm_vidc_s3d_frame_packing_payload *s3d_frame_packing_payload;
@@ -10093,11 +10066,12 @@ void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
         if(internal_hdr_info_changed_flag) {
             print_debug_hdr_color_info(&(m_internal_hdr_info.sInfo), "Internal");
             print_debug_hdr_color_info(&(m_client_hdr_info.sInfo), "Client");
-            if(!color_event) {
+            if(!reconfig_event_sent) {
                 DEBUG_PRINT_HIGH("Initiating PORT Reconfig due to HDR Info Change");
                 post_event(OMX_CORE_OUTPUT_PORT_INDEX,
                            OMX_QTIIndexConfigDescribeHDRColorInfo,
                            OMX_COMPONENT_GENERATE_PORT_RECONFIG);
+                reconfig_event_sent = true;
             }
         }
 
@@ -10143,7 +10117,7 @@ unrecognized_extradata:
         ptr_extradatabuff->metadata_info.offset = buf_index * drv_ctx.extradata_info.buffer_size;
         ptr_extradatabuff->metadata_info.buffer_size = drv_ctx.extradata_info.size;
     }
-    return;
+    return reconfig_event_sent;
 }
 
 OMX_ERRORTYPE omx_vdec::enable_extradata(OMX_U64 requested_extradata,
@@ -11557,11 +11531,6 @@ OMX_ERRORTYPE omx_vdec::enable_adaptive_playback(unsigned long nMaxFrameWidth,
 
      update_resolution(m_smoothstreaming_width, m_smoothstreaming_height,
                        m_smoothstreaming_width, m_smoothstreaming_height);
-     eRet = is_video_session_supported();
-     if (eRet != OMX_ErrorNone) {
-         DEBUG_PRINT_ERROR("video session is not supported");
-         return eRet;
-     }
 
      //Get upper limit buffer size for max smooth streaming resolution set
      fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;

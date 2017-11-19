@@ -656,7 +656,6 @@ class omx_vdec: public qc_omx_component
         OMX_ERRORTYPE allocate_extradata();
         void free_extradata();
         int update_resolution(int width, int height, int stride, int scan_lines);
-        OMX_ERRORTYPE is_video_session_supported();
         Signal signal;
         pthread_t msg_thread_id;
         pthread_t async_thread_id;
@@ -879,8 +878,7 @@ class omx_vdec: public qc_omx_component
         OMX_ERRORTYPE update_picture_resolution();
         int stream_off(OMX_U32 port);
         void set_frame_rate(OMX_S64 act_timestamp);
-        void handle_extradata_secure(OMX_BUFFERHEADERTYPE *p_buf_hdr);
-        void handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr);
+        bool handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr);
         void convert_color_space_info(OMX_U32 primaries, OMX_U32 range,
             OMX_U32 transfer, OMX_U32 matrix,
             ColorAspects *aspects);
