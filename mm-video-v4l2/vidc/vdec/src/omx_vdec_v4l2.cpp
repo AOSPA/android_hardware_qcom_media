@@ -717,7 +717,8 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     m_profile(0),
     client_set_fps(false),
     stereo_output_mode(HAL_NO_3D),
-    m_last_rendered_TS(-1),
+    m_last_rendered_TS(0),
+    m_dec_hfr_fps(0),
     m_queued_codec_config_count(0),
     secure_scaling_to_non_secure_opb(false),
     m_force_compressed_for_dpb(true),
@@ -751,6 +752,11 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
             (int32_t *)&m_debug.in_buffer_log, 0);
     Platform::Config::getInt32(Platform::vidc_dec_log_out,
             (int32_t *)&m_debug.out_buffer_log, 0);
+
+    Platform::Config::getInt32(Platform::vidc_dec_hfr_fps,
+            (int32_t *)&m_dec_hfr_fps, 0);
+
+    DEBUG_PRINT_HIGH("HFR fps value = %d", m_dec_hfr_fps);
 
     property_value[0] = '\0';
     property_get("vendor.vidc.dec.log.in", property_value, "0");
@@ -1008,6 +1014,7 @@ OMX_ERRORTYPE omx_vdec::set_dpb(bool is_split_mode, int dpb_color_format)
          capture_capability == V4L2_PIX_FMT_NV12 ? "nv12":
          capture_capability == V4L2_PIX_FMT_NV12_UBWC ? "nv12_ubwc":
          capture_capability == V4L2_PIX_FMT_NV12_TP10_UBWC ? "nv12_10bit_ubwc":
+         capture_capability == V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010 ? "P010":
          "unknown");
 
     ctrl[0].id = V4L2_CID_MPEG_VIDC_VIDEO_STREAM_OUTPUT_MODE;
@@ -1080,6 +1087,11 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode(bool is_downscalar_enabled)
         if (dpb_bit_depth == MSM_VIDC_BIT_DEPTH_10) {
             enable_split = true;
             dpb_color_format = V4L2_MPEG_VIDC_VIDEO_DPB_COLOR_FMT_TP10_UBWC;
+            if(is_flexible_format){ // if flexible formats are expected, QCom_P010 is set for 10bit cases here
+                 drv_ctx.output_format = VDEC_YUV_FORMAT_P010_VENUS;
+                 capture_capability = V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010;
+                 capability_changed = true;
+            }
         } else  if (m_progressive == MSM_VIDC_PIC_STRUCT_PROGRESSIVE) {
             enable_split = true;
             dpb_color_format = V4L2_MPEG_VIDC_VIDEO_DPB_COLOR_FMT_UBWC;
@@ -1132,6 +1144,19 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode(bool is_downscalar_enabled)
     }
 
     return eRet;
+}
+
+bool omx_vdec::check_supported_flexible_formats(OMX_COLOR_FORMATTYPE required_format)
+{
+    if(required_format == (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m ||
+         required_format == (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420SemiPlanarP010Venus) {
+         //for now, the flexible formats should be QCOM_NV12 by default for 8bit cases
+         //it will change to QCOM_P010 after 10bit port-reconfig accordingly
+       return TRUE;
+    }
+    else {
+       return FALSE;
+    }
 }
 
 int omx_vdec::enable_downscalar()
@@ -1985,6 +2010,7 @@ int omx_vdec::log_cc_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
 int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
     int buf_index = 0;
     char *temp = NULL;
+    char *bufaddr = NULL;
 
     if (!(m_debug.out_buffer_log || m_debug.out_meta_buffer_log) || !buffer || !buffer->nFilledLen)
         return 0;
@@ -2018,7 +2044,18 @@ int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
     }
 
     buf_index = buffer - m_out_mem_ptr;
-    temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr;
+    bufaddr = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr;
+    if (dynamic_buf_mode && !secure_mode) {
+        bufaddr = (char*)mmap(0, drv_ctx.ptr_outputbuffer[buf_index].buffer_len,
+                                 PROT_READ|PROT_WRITE, MAP_SHARED,
+                                 drv_ctx.ptr_outputbuffer[buf_index].pmem_fd, 0);
+        //mmap returns (void *)-1 on failure and sets error code in errno.
+        if (bufaddr == MAP_FAILED) {
+            DEBUG_PRINT_ERROR("mmap failed - errno: %d", errno);
+            return -1;
+        }
+    }
+    temp = bufaddr;
 
     if (drv_ctx.output_format == VDEC_YUV_FORMAT_NV12_UBWC ||
             drv_ctx.output_format == VDEC_YUV_FORMAT_NV12_TP10_UBWC) {
@@ -2050,13 +2087,12 @@ int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
             y_meta_plane = MSM_MEDIA_ALIGN(y_meta_stride * y_meta_scanlines, 4096);
             y_plane = MSM_MEDIA_ALIGN(y_stride * y_sclines, 4096);
 
-            temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr;
             for (i = 0; i < y_meta_scanlines; i++) {
                  bytes_written = fwrite(temp, y_meta_stride, 1, m_debug.out_ymeta_file);
                  temp += y_meta_stride;
             }
 
-            temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr + y_meta_plane + y_plane;
+            temp = bufaddr + y_meta_plane + y_plane;
             for(i = 0; i < uv_meta_scanlines; i++) {
                 bytes_written += fwrite(temp, uv_meta_stride, 1, m_debug.out_uvmeta_file);
                 temp += uv_meta_stride;
@@ -2080,12 +2116,40 @@ int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
              bytes_written = fwrite(temp, drv_ctx.video_resolution.frame_width, 1, m_debug.outfile);
              temp += stride;
         }
-        temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr + stride * scanlines;
+        temp = bufaddr + stride * scanlines;
         int stride_c = stride;
         for(i = 0; i < drv_ctx.video_resolution.frame_height/2; i++) {
             bytes_written += fwrite(temp, drv_ctx.video_resolution.frame_width, 1, m_debug.outfile);
             temp += stride_c;
         }
+    } else if (m_debug.outfile && drv_ctx.output_format == VDEC_YUV_FORMAT_P010_VENUS) {
+        int stride = drv_ctx.video_resolution.stride;
+        int scanlines = drv_ctx.video_resolution.scan_lines;
+        if (m_smoothstreaming_mode) {
+            stride = drv_ctx.video_resolution.frame_width * 2;
+            scanlines = drv_ctx.video_resolution.frame_height;
+            stride = (stride + DEFAULT_WIDTH_ALIGNMENT - 1) & (~(DEFAULT_WIDTH_ALIGNMENT - 1));
+            scanlines = (scanlines + DEFAULT_HEIGHT_ALIGNMENT - 1) & (~(DEFAULT_HEIGHT_ALIGNMENT - 1));
+        }
+        unsigned i;
+        DEBUG_PRINT_HIGH("Logging width/height(%u/%u) stride/scanlines(%u/%u)",
+            drv_ctx.video_resolution.frame_width,
+            drv_ctx.video_resolution.frame_height, stride, scanlines);
+        int bytes_written = 0;
+        for (i = 0; i < drv_ctx.video_resolution.frame_height; i++) {
+             bytes_written = fwrite(temp, drv_ctx.video_resolution.frame_width, 2, m_debug.outfile);
+             temp += stride;
+        }
+        temp = bufaddr + stride * scanlines;
+        int stride_c = stride;
+        for(i = 0; i < drv_ctx.video_resolution.frame_height/2; i++) {
+            bytes_written += fwrite(temp, drv_ctx.video_resolution.frame_width, 2, m_debug.outfile);
+            temp += stride_c;
+        }
+    }
+
+    if (dynamic_buf_mode && !secure_mode) {
+        munmap(bufaddr, drv_ctx.ptr_outputbuffer[buf_index].buffer_len);
     }
     return 0;
 }
@@ -2157,6 +2221,7 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
     struct v4l2_requestbuffers bufreq;
     struct v4l2_control control;
     struct v4l2_frmsizeenum frmsize;
+    struct v4l2_queryctrl query;
     unsigned int   alignment = 0,buffer_size = 0, nBufCount = 0;
     int fds[2];
     int r,ret=0;
@@ -2306,6 +2371,7 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
 
         dpb_bit_depth = MSM_VIDC_BIT_DEPTH_8;
         m_progressive = MSM_VIDC_PIC_STRUCT_PROGRESSIVE;
+        is_flexible_format = FALSE;
 
         if (m_disable_ubwc_mode) {
             capture_capability = V4L2_PIX_FMT_NV12;
@@ -2460,6 +2526,17 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
         if (ret < 0)
             DEBUG_PRINT_HIGH("Failed to set OUTPUT Buffer count Err = %d Count = %d",
                 ret, nBufCount);
+
+        if (m_dec_hfr_fps) {
+            memset(&query, 0, sizeof(struct v4l2_queryctrl));
+
+            query.id = V4L2_CID_MPEG_VIDC_VIDEO_FRAME_RATE;
+            ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_QUERYCTRL, &query);
+            if (!ret)
+                m_dec_hfr_fps = MIN(query.maximum, m_dec_hfr_fps);
+
+            DEBUG_PRINT_HIGH("Updated HFR fps value = %d", m_dec_hfr_fps);
+        }
 
 #endif
         m_state = OMX_StateLoaded;
@@ -3912,9 +3989,14 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                portDefn = (OMX_PARAM_PORTDEFINITIONTYPE *) paramData;
                                //TODO: Check if any allocate buffer/use buffer/useNativeBuffer has
                                //been called.
-                               DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamPortDefinition H= %d, W = %d",
+                               DEBUG_PRINT_LOW(
+                                       "set_parameter: OMX_IndexParamPortDefinition: dir %d port %d wxh %dx%d count: min %d actual %d size %d",
+                                       (int)portDefn->eDir, (int)portDefn->nPortIndex,
+                                       (int)portDefn->format.video.nFrameWidth,
                                        (int)portDefn->format.video.nFrameHeight,
-                                       (int)portDefn->format.video.nFrameWidth);
+                                       (int)portDefn->nBufferCountMin,
+                                       (int)portDefn->nBufferCountActual,
+                                       (int)portDefn->nBufferSize);
 
                                if (portDefn->nBufferCountActual > MAX_NUM_INPUT_OUTPUT_BUFFERS) {
                                    DEBUG_PRINT_ERROR("ERROR: Buffers requested exceeds max limit %d",
@@ -4206,11 +4288,15 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                         portFmt->eColorFormat == OMX_COLOR_FormatYUV420SemiPlanar) {
                                         op_format = (enum vdec_output_format)VDEC_YUV_FORMAT_NV12;
                                         fmt.fmt.pix_mp.pixelformat = capture_capability = V4L2_PIX_FMT_NV12;
+                                        //check if the required color format is a supported flexible format
+                                        is_flexible_format = check_supported_flexible_formats(portFmt->eColorFormat);
                                     } else if (portFmt->eColorFormat == (OMX_COLOR_FORMATTYPE)
                                                    QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed ||
                                                portFmt->eColorFormat == OMX_COLOR_FormatYUV420Planar) {
                                         op_format = (enum vdec_output_format)VDEC_YUV_FORMAT_NV12_UBWC;
                                         fmt.fmt.pix_mp.pixelformat = capture_capability = V4L2_PIX_FMT_NV12_UBWC;
+                                        //check if the required color format is a supported flexible format
+                                        is_flexible_format = check_supported_flexible_formats(portFmt->eColorFormat);
                                     } else {
                                         eRet = OMX_ErrorBadParameter;
                                     }
@@ -6256,8 +6342,6 @@ OMX_ERRORTYPE  omx_vdec::allocate_output_buffer(
         int nPlatformEntrySize = 0;
         int nPlatformListSize  = 0;
         int nPMEMInfoSize = 0;
-        int pmem_fd = -1;
-        unsigned char *pmem_baseaddress = NULL;
 
         OMX_QCOM_PLATFORM_PRIVATE_LIST      *pPlatformList;
         OMX_QCOM_PLATFORM_PRIVATE_ENTRY     *pPlatformEntry;
@@ -6333,76 +6417,13 @@ OMX_ERRORTYPE  omx_vdec::allocate_output_buffer(
                 // Keep pBuffer NULL till vdec is opened
                 bufHdr->pBuffer            = NULL;
                 bufHdr->nOffset            = 0;
-
-#ifdef USE_ION
-                // Allocate output buffers as cached to improve performance of software-reading
-                // of the YUVs. Output buffers are cache-invalidated in driver.
-                // If color-conversion is involved, Only the C2D output buffers are cached, no
-                // need to cache the decoder's output buffers
-                int cache_flag = client_buffers.is_color_conversion_enabled() ? 0 : ION_FLAG_CACHED;
-                ion_device_fd = alloc_map_ion_memory(drv_ctx.op_buf.buffer_size,
-                        secure_scaling_to_non_secure_opb ? SZ_4K : drv_ctx.op_buf.alignment,
-                        &ion_alloc_data, &fd_ion_data,
-                        (secure_mode && !secure_scaling_to_non_secure_opb) ?
-                        SECURE_FLAGS_OUTPUT_BUFFER : cache_flag);
-                if (ion_device_fd < 0) {
-                    return OMX_ErrorInsufficientResources;
-                }
-                pmem_fd = fd_ion_data.fd;
-#else
-                pmem_fd = open (MEM_DEVICE,O_RDWR);
-                if (pmem_fd < 0) {
-                    DEBUG_PRINT_ERROR("ERROR:pmem fd for output buffer %d",
-                            drv_ctx.op_buf.buffer_size);
-                    return OMX_ErrorInsufficientResources;
-                }
-                if (!align_pmem_buffers(pmem_fd, drv_ctx.op_buf.buffer_size,
-                            drv_ctx.op_buf.alignment)) {
-                    DEBUG_PRINT_ERROR("align_pmem_buffers() failed");
-                    close(pmem_fd);
-                    return OMX_ErrorInsufficientResources;
-                }
-#endif
-                if (!secure_mode) {
-                    pmem_baseaddress = (unsigned char *)mmap(NULL,
-                            drv_ctx.op_buf.buffer_size,
-                            PROT_READ|PROT_WRITE,MAP_SHARED,pmem_fd,0);
-                    if (pmem_baseaddress == MAP_FAILED) {
-                        DEBUG_PRINT_ERROR("MMAP failed for Size %u",
-                                (unsigned int)drv_ctx.op_buf.buffer_size);
-                        close(pmem_fd);
-#ifdef USE_ION
-                        free_ion_memory(&drv_ctx.op_buf_ion_info[i]);
-#endif
-                        return OMX_ErrorInsufficientResources;
-                    }
-                }
                 pPMEMInfo->offset = 0;
                 pPMEMInfo->pmem_fd = -1;
                 bufHdr->pPlatformPrivate = pPlatformList;
-
-                drv_ctx.ptr_outputbuffer[i].pmem_fd = pmem_fd;
-                m_pmem_info[i].pmem_fd = pmem_fd;
-#ifdef USE_ION
-                drv_ctx.op_buf_ion_info[i].ion_device_fd = ion_device_fd;
-                drv_ctx.op_buf_ion_info[i].ion_alloc_data = ion_alloc_data;
-                drv_ctx.op_buf_ion_info[i].fd_ion_data = fd_ion_data;
-#endif
-
                 /*Create a mapping between buffers*/
                 bufHdr->pOutputPortPrivate = &drv_ctx.ptr_respbuffer[i];
                 drv_ctx.ptr_respbuffer[i].client_data = (void *)\
                                     &drv_ctx.ptr_outputbuffer[i];
-                drv_ctx.ptr_outputbuffer[i].offset = 0;
-                drv_ctx.ptr_outputbuffer[i].bufferaddr = pmem_baseaddress;
-                drv_ctx.ptr_outputbuffer[i].mmaped_size = drv_ctx.op_buf.buffer_size;
-                m_pmem_info[i].size = drv_ctx.ptr_outputbuffer[i].buffer_len;
-                m_pmem_info[i].mapped_size = drv_ctx.ptr_outputbuffer[i].mmaped_size;
-                m_pmem_info[i].buffer = drv_ctx.ptr_outputbuffer[i].bufferaddr;
-
-                DEBUG_PRINT_LOW("pmem_fd = %d offset = %u address = %p",
-                        pmem_fd, (unsigned int)drv_ctx.ptr_outputbuffer[i].offset,
-                        drv_ctx.ptr_outputbuffer[i].bufferaddr);
                 // Move the buffer and buffer header pointers
                 bufHdr++;
                 pPMEMInfo++;
@@ -6450,10 +6471,65 @@ OMX_ERRORTYPE  omx_vdec::allocate_output_buffer(
     if (eRet == OMX_ErrorNone) {
         if (i < drv_ctx.op_buf.actualcount) {
             int rc;
-            m_pmem_info[i].offset = drv_ctx.ptr_outputbuffer[i].offset;
+            int pmem_fd = -1;
+            unsigned char *pmem_baseaddress = NULL;
 
-            drv_ctx.ptr_outputbuffer[i].buffer_len =
-                drv_ctx.op_buf.buffer_size;
+#ifdef USE_ION
+            // Allocate output buffers as cached to improve performance of software-reading
+            // of the YUVs. Output buffers are cache-invalidated in driver.
+            // If color-conversion is involved, Only the C2D output buffers are cached, no
+            // need to cache the decoder's output buffers
+            int cache_flag = client_buffers.is_color_conversion_enabled() ? 0 : ION_FLAG_CACHED;
+            ion_device_fd = alloc_map_ion_memory(drv_ctx.op_buf.buffer_size,
+                    secure_scaling_to_non_secure_opb ? SZ_4K : drv_ctx.op_buf.alignment,
+                    &ion_alloc_data, &fd_ion_data,
+                    (secure_mode && !secure_scaling_to_non_secure_opb) ?
+                    SECURE_FLAGS_OUTPUT_BUFFER : cache_flag);
+            if (ion_device_fd < 0) {
+                return OMX_ErrorInsufficientResources;
+            }
+            pmem_fd = fd_ion_data.fd;
+            drv_ctx.op_buf_ion_info[i].ion_device_fd = ion_device_fd;
+            drv_ctx.op_buf_ion_info[i].ion_alloc_data = ion_alloc_data;
+            drv_ctx.op_buf_ion_info[i].fd_ion_data = fd_ion_data;
+#else
+            pmem_fd = open (MEM_DEVICE,O_RDWR);
+            if (pmem_fd < 0) {
+                DEBUG_PRINT_ERROR("ERROR:pmem fd for output buffer %d",
+                        drv_ctx.op_buf.buffer_size);
+                return OMX_ErrorInsufficientResources;
+            }
+            if (!align_pmem_buffers(pmem_fd, drv_ctx.op_buf.buffer_size,
+                        drv_ctx.op_buf.alignment)) {
+                DEBUG_PRINT_ERROR("align_pmem_buffers() failed");
+                close(pmem_fd);
+                return OMX_ErrorInsufficientResources;
+            }
+#endif
+            if (!secure_mode) {
+                pmem_baseaddress = (unsigned char *)mmap(NULL,
+                        drv_ctx.op_buf.buffer_size,
+                        PROT_READ|PROT_WRITE,MAP_SHARED,pmem_fd,0);
+                if (pmem_baseaddress == MAP_FAILED) {
+                    DEBUG_PRINT_ERROR("MMAP failed for Size %u",
+                            (unsigned int)drv_ctx.op_buf.buffer_size);
+                    close(pmem_fd);
+#ifdef USE_ION
+                    free_ion_memory(&drv_ctx.op_buf_ion_info[i]);
+#endif
+                    return OMX_ErrorInsufficientResources;
+                }
+            }
+            drv_ctx.ptr_outputbuffer[i].pmem_fd = pmem_fd;
+            drv_ctx.ptr_outputbuffer[i].offset = 0;
+            drv_ctx.ptr_outputbuffer[i].bufferaddr = pmem_baseaddress;
+            drv_ctx.ptr_outputbuffer[i].mmaped_size = drv_ctx.op_buf.buffer_size;
+            drv_ctx.ptr_outputbuffer[i].buffer_len = drv_ctx.op_buf.buffer_size;
+            m_pmem_info[i].pmem_fd = pmem_fd;
+            m_pmem_info[i].size = drv_ctx.ptr_outputbuffer[i].buffer_len;
+            m_pmem_info[i].mapped_size = drv_ctx.ptr_outputbuffer[i].mmaped_size;
+            m_pmem_info[i].buffer = drv_ctx.ptr_outputbuffer[i].bufferaddr;
+            m_pmem_info[i].offset = drv_ctx.ptr_outputbuffer[i].offset;
 
             *bufferHdr = (m_out_mem_ptr + i );
             if (secure_mode) {
@@ -6464,8 +6540,6 @@ OMX_ERRORTYPE  omx_vdec::allocate_output_buffer(
                 drv_ctx.ptr_outputbuffer[i].bufferaddr = *bufferHdr;
 #endif
             }
-            drv_ctx.ptr_outputbuffer[i].mmaped_size = drv_ctx.op_buf.buffer_size;
-
             if (i == (drv_ctx.op_buf.actualcount -1 ) && !streaming[CAPTURE_PORT]) {
                 enum v4l2_buf_type buf_type;
 
@@ -6473,6 +6547,7 @@ OMX_ERRORTYPE  omx_vdec::allocate_output_buffer(
                 buf_type=V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
                 rc=ioctl(drv_ctx.video_driver_fd, VIDIOC_STREAMON,&buf_type);
                 if (rc) {
+                    DEBUG_PRINT_ERROR("STREAMON(CAPTURE_MPLANE) Failed");
                     return OMX_ErrorInsufficientResources;
                 } else {
                     streaming[CAPTURE_PORT] = true;
@@ -7951,8 +8026,10 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
         il_buffer = client_buffers.get_il_buf_hdr(buffer);
         OMX_U32 current_framerate = (int)(drv_ctx.frame_rate.fps_numerator / drv_ctx.frame_rate.fps_denominator);
 
-        if (il_buffer && m_last_rendered_TS >= 0) {
+        if (il_buffer && m_dec_hfr_fps > 0) {
             OMX_TICKS ts_delta = (OMX_TICKS)llabs(il_buffer->nTimeStamp - m_last_rendered_TS);
+            // Convert fps into ms value. 1 sec = 1000000 ms.
+            OMX_U64 target_ts_delta = m_dec_hfr_fps ? 1000000 / m_dec_hfr_fps : ts_delta;
 
             // Current frame can be send for rendering if
             // (a) current FPS is <=  60
@@ -7962,8 +8039,8 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
             // (e) its TS is equal to previous frame TS
             // (f) if marked EOS
 
-            if(current_framerate <= 60 || m_last_rendered_TS == 0 ||
-               il_buffer->nTimeStamp == 0 || ts_delta >= 16000 ||
+            if(current_framerate <= (OMX_U32)m_dec_hfr_fps || m_last_rendered_TS == 0 ||
+               il_buffer->nTimeStamp == 0 || ts_delta >= (OMX_TICKS)target_ts_delta||
                ts_delta == 0 || (il_buffer->nFlags & OMX_BUFFERFLAG_EOS)) {
                m_last_rendered_TS = il_buffer->nTimeStamp;
             } else {
@@ -7977,8 +8054,8 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
 
             //above code makes sure that delta b\w two consecutive frames is not
             //greater than 16ms, slow-mo feature, so cap fps to max 60
-            if (current_framerate > 60 ) {
-                current_framerate = 60;
+            if (current_framerate > (OMX_U32)m_dec_hfr_fps ) {
+                current_framerate = m_dec_hfr_fps;
             }
         }
 
@@ -8001,8 +8078,8 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
                     }
                 }
             }
-            if (refresh_rate > 60) {
-                refresh_rate = 60;
+            if (refresh_rate > m_dec_hfr_fps) {
+                refresh_rate = m_dec_hfr_fps;
             }
             DEBUG_PRINT_LOW("frc set refresh_rate %f, frame %d", refresh_rate, proc_frms);
             OMX_U32 buf_index = buffer - m_out_mem_ptr;
@@ -8393,6 +8470,12 @@ int omx_vdec::async_message_process (void *context, void* message)
                            omx->drv_ctx.video_resolution.scan_lines =
                                VENUS_Y_SCANLINES(COLOR_FMT_NV12_BPP10_UBWC, omx->drv_ctx.video_resolution.frame_height);
                         }
+                        else if(omx->drv_ctx.output_format == VDEC_YUV_FORMAT_P010_VENUS) {
+                           omx->drv_ctx.video_resolution.stride =
+                               VENUS_Y_STRIDE(COLOR_FMT_P010, omx->drv_ctx.video_resolution.frame_width);
+                           omx->drv_ctx.video_resolution.scan_lines =
+                               VENUS_Y_SCANLINES(COLOR_FMT_P010, omx->drv_ctx.video_resolution.frame_height);
+                        }
 
                        if(!reconfig_event_sent) {
                            omx->post_event(OMX_CORE_OUTPUT_PORT_INDEX,
@@ -8779,7 +8862,6 @@ OMX_ERRORTYPE omx_vdec::set_buffer_req(vdec_allocatorproperty *buffer_prop)
     unsigned buf_size = 0;
     struct v4l2_format fmt, c_fmt;
     struct v4l2_requestbuffers bufreq;
-    struct v4l2_control control;
     int ret = 0;
     DEBUG_PRINT_LOW("SetBufReq IN: ActCnt(%d) Size(%u)",
             buffer_prop->actualcount, (unsigned int)buffer_prop->buffer_size);
@@ -8796,23 +8878,25 @@ OMX_ERRORTYPE omx_vdec::set_buffer_req(vdec_allocatorproperty *buffer_prop)
         fmt.fmt.pix_mp.plane_fmt[0].sizeimage = buf_size;
 
         if (buffer_prop->buffer_type == VDEC_BUFFER_TYPE_INPUT) {
-            control.id = V4L2_CID_MIN_BUFFERS_FOR_OUTPUT;
             fmt.type =V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
             fmt.fmt.pix_mp.pixelformat = output_capability;
+            DEBUG_PRINT_LOW("S_FMT: type %d wxh %dx%d size %d format %x",
+                fmt.type, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
+                fmt.fmt.pix_mp.plane_fmt[0].sizeimage, fmt.fmt.pix_mp.pixelformat);
             ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_S_FMT, &fmt);
         } else if (buffer_prop->buffer_type == VDEC_BUFFER_TYPE_OUTPUT) {
-            control.id = V4L2_CID_MIN_BUFFERS_FOR_CAPTURE;
             c_fmt.type =V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
             c_fmt.fmt.pix_mp.pixelformat = capture_capability;
             ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_G_FMT, &c_fmt);
             c_fmt.fmt.pix_mp.plane_fmt[0].sizeimage = buf_size;
+            DEBUG_PRINT_LOW("S_FMT: type %d wxh %dx%d size %d format %x",
+                c_fmt.type, c_fmt.fmt.pix_mp.width, c_fmt.fmt.pix_mp.height,
+                c_fmt.fmt.pix_mp.plane_fmt[0].sizeimage, c_fmt.fmt.pix_mp.pixelformat);
             ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_S_FMT, &c_fmt);
         } else {
             eRet = OMX_ErrorBadParameter;
         }
-
         if (ret) {
-            /*TODO: How to handle this case */
             DEBUG_PRINT_ERROR("Setting buffer requirements (format) failed %d", ret);
             eRet = OMX_ErrorInsufficientResources;
         }
@@ -8827,15 +8911,8 @@ OMX_ERRORTYPE omx_vdec::set_buffer_req(vdec_allocatorproperty *buffer_prop)
             eRet = OMX_ErrorBadParameter;
         }
 
-        control.value = buffer_prop->mincount;
         if (eRet == OMX_ErrorNone) {
-            ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_G_CTRL, &control);
-            if (ret)
-                eRet = OMX_ErrorUndefined;
-        }
-
-        if (eRet == OMX_ErrorNone &&
-                        buffer_prop->actualcount >= (uint32_t)control.value) {
+            DEBUG_PRINT_LOW("REQBUFS: type %d count %d", bufreq.type, bufreq.count);
             ret = ioctl(drv_ctx.video_driver_fd,VIDIOC_REQBUFS, &bufreq);
         }
 
@@ -10948,11 +11025,14 @@ omx_vdec::allocate_color_convert_buf::allocate_color_convert_buf()
                         QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed;
     mMapOutput2DriverColorFormat[VDEC_YUV_FORMAT_NV12_TP10_UBWC][-1] =
                      QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed;
+    mMapOutput2DriverColorFormat[VDEC_YUV_FORMAT_P010_VENUS][-1] =
+                     QOMX_COLOR_FORMATYUV420SemiPlanarP010Venus;
 
     mMapOutput2Convert.insert( {
             {VDEC_YUV_FORMAT_NV12, NV12_128m},
             {VDEC_YUV_FORMAT_NV12_UBWC, NV12_UBWC},
             {VDEC_YUV_FORMAT_NV12_TP10_UBWC, TP10_UBWC},
+            {VDEC_YUV_FORMAT_P010_VENUS, YCbCr420_VENUS_P010},
         });
 }
 
@@ -11098,7 +11178,9 @@ bool omx_vdec::allocate_color_convert_buf::set_color_format(
         (drv_color_format != (OMX_COLOR_FORMATTYPE)
                 QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mMultiView) &&
         (drv_color_format != (OMX_COLOR_FORMATTYPE)
-                QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed);
+                QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed) &&
+        (drv_color_format != (OMX_COLOR_FORMATTYPE)
+                QOMX_COLOR_FORMATYUV420SemiPlanarP010Venus);
 
     dest_color_format_c2d_enable = (dest_color_format != (OMX_COLOR_FORMATTYPE)
             QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed) &&
@@ -11680,6 +11762,9 @@ void omx_vdec::prefetchNewBuffers() {
         break;
     case VDEC_YUV_FORMAT_NV12_TP10_UBWC:
         color_fmt = COLOR_FMT_NV12_BPP10_UBWC;
+        break;
+    case VDEC_YUV_FORMAT_P010_VENUS:
+        color_fmt = COLOR_FMT_P010;
         break;
     default:
         color_fmt = -1;
