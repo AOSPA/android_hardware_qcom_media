@@ -148,6 +148,7 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     memset(&color_space, 0x0, sizeof(color_space));
     memset(&temporal_layers_config, 0x0, sizeof(temporal_layers_config));
     client_req_disable_bframe   = false;
+    bframe_implicitly_enabled = false;
     client_req_disable_temporal_layers  = false;
     client_req_turbo_mode  = false;
     intra_period.num_pframes = 29;
@@ -756,6 +757,11 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
         data->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) +
             sizeof(struct msm_vidc_roi_qp_payload) +
             roi.info.nRoiMBInfoSize - 2 * sizeof(unsigned int), 4);
+        if (data->nSize > input_extradata_info.buffer_size  - consumed_len) {
+           DEBUG_PRINT_ERROR("Buffer size (%lu) is less than ROI extradata size (%u)",
+                             (input_extradata_info.buffer_size - consumed_len) ,data->nSize);
+           return false;
+        }
         data->nVersion.nVersion = OMX_SPEC_VERSION;
         data->nPortIndex = 0;
         data->eType = (OMX_EXTRADATATYPE)MSM_VIDC_EXTRADATA_ROI_QP;
@@ -769,6 +775,7 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
         DEBUG_PRINT_HIGH("Using ROI QP map: Enable = %d", roiData->b_roi_info);
         memcpy(roiData->data, roi.info.pRoiMBInfo, roi.info.nRoiMBInfoSize);
         data = (OMX_OTHER_EXTRADATATYPE *)((char *)data + data->nSize);
+        consumed_len += data->nSize;
     }
 
     if (m_roi_enabled) {
@@ -2773,6 +2780,11 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                         DEBUG_PRINT_ERROR("ERROR: Request for setting intra period failed");
                         return false;
                     }
+
+                    if (venc_set_idr_period(intraperiod->nIDRPeriod) == false) {
+                        DEBUG_PRINT_ERROR("ERROR: Setting idr period failed");
+                        return false;
+                    }
                 }
                 client_req_disable_bframe = (intraperiod->nBFrames == 0) ? true : false;
 
@@ -4115,6 +4127,19 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
         }
     }
 
+    if (!streaming[OUTPUT_PORT] &&
+        (m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_TP10_UBWC &&
+         m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_P010_UBWC &&
+         m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_UBWC)) {
+        if (bframe_implicitly_enabled) {
+            DEBUG_PRINT_HIGH("Disabling implicitly enabled B-frames");
+            if (!venc_set_intra_period(intra_period.num_pframes, 0)) {
+                DEBUG_PRINT_ERROR("Failed to set nPframes/nBframes");
+                return OMX_ErrorUndefined;
+            }
+        }
+    }
+
     extra_idx = EXTRADATA_IDX(num_input_planes);
 
     if (extra_idx && (extra_idx < VIDEO_MAX_PLANES)) {
@@ -5025,6 +5050,7 @@ bool venc_dev::venc_reconfigure_intra_period()
     if (enableBframes && intra_period.num_bframes == 0) {
         intra_period.num_bframes = VENC_BFRAME_MAX_COUNT;
         intra_period.num_pframes = intra_period.num_pframes / (1 + intra_period.num_bframes);
+        bframe_implicitly_enabled = true;
     } else if (!enableBframes && intra_period.num_bframes > 0) {
         intra_period.num_pframes = intra_period.num_pframes + (intra_period.num_pframes * intra_period.num_bframes);
         intra_period.num_bframes = 0;
@@ -5098,7 +5124,7 @@ bool venc_dev::venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
         (codec_profile.profile != V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN)        &&
         (codec_profile.profile != V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10)      &&
         (codec_profile.profile != V4L2_MPEG_VIDEO_H264_PROFILE_HIGH)) {
-        nBFrames=0;
+        nBFrames = 0;
     }
 
     if (temporal_layers_config.nPLayers > 1 && nBFrames) {
