@@ -406,6 +406,7 @@ class venc_dev
 #endif
         };
 
+        int nPframes_cache;
         int stopped;
         int resume_in_stopped;
         bool m_max_allowed_bitrate_check;
