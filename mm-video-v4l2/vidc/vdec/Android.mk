@@ -111,6 +111,8 @@ LOCAL_SRC_FILES         := src/ts_parser.cpp
 LOCAL_STATIC_LIBRARIES  := libOmxVidcCommon
 LOCAL_SRC_FILES         += src/omx_vdec_v4l2.cpp
 
+LOCAL_CFLAGS            += -Wno-error
+
 include $(BUILD_SHARED_LIBRARY)
 
 
