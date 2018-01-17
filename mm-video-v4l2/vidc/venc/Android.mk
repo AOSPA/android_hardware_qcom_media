@@ -21,11 +21,11 @@ libmm-venc-def += -Werror
 libmm-venc-def += -D_ANDROID_ICS_
 
 TARGETS_THAT_USE_FLAG_MSM8226 := msm8226 msm8916 msm8909
-TARGETS_THAT_NEED_SW_VENC_MPEG4 := msm8909 msm8937 sdm845 msmpeafowl sdm670
+TARGETS_THAT_NEED_SW_VENC_MPEG4 := msm8909 msm8937 sdm845 msmpeafowl sdm670 qcs605
 TARGETS_THAT_NEED_SW_VENC_HEVC := msm8992
-TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8998 sdm845 msmpeafowl sdm670
+TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8998 sdm845 msmpeafowl sdm670 qcs605
 TARGETS_THAT_SUPPORT_VQZIP := msm8996 msm8998
-TARGETS_THAT_SUPPORT_SW_VENC_ROTATION := sdm845 msmpeafowl sdm670
+TARGETS_THAT_SUPPORT_SW_VENC_ROTATION := sdm845 msmpeafowl sdm670 qcs605
 
 ifeq ($(TARGET_BOARD_PLATFORM),msm8610)
 libmm-venc-def += -D_MSM8610_
@@ -65,6 +65,9 @@ libmm-venc-inc      += $(TARGET_OUT_HEADERS)/qcom/display
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/adreno
 libmm-venc-inc      += frameworks/native/include/media/hardware
 libmm-venc-inc      += frameworks/native/include/media/openmax
+libmm-venc-inc      += frameworks/native/libs/nativewindow/include
+libmm-venc-inc      += frameworks/native/libs/nativebase/include
+libmm-venc-inc      += frameworks/native/libs/arect/include
 libmm-venc-inc      += $(QCOM_MEDIA_ROOT)/libc2dcolorconvert
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/libvqzip
 libmm-venc-inc      += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
@@ -123,8 +126,7 @@ LOCAL_C_INCLUDES                := $(libmm-venc-inc)
 LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-venc-add-dep)
 
 LOCAL_PRELINK_MODULE      := false
-LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl libplatformconfig
-LOCAL_SHARED_LIBRARIES    += libMpeg4SwEncoder
+LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl libplatformconfig libMpeg4SwEncoder
 LOCAL_SHARED_LIBRARIES    += libnativewindow
 LOCAL_SHARED_LIBRARIES    += libqdMetaData
 

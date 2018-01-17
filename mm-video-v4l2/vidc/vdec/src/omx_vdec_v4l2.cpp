@@ -1055,13 +1055,6 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode(bool is_downscalar_enabled)
     bool dither_enable = false;
     bool capability_changed = false;
 
-    // Check the component for its valid current state
-    if (!BITMASK_PRESENT(&m_flags ,OMX_COMPONENT_IDLE_PENDING) &&
-        !BITMASK_PRESENT(&m_flags, OMX_COMPONENT_OUTPUT_ENABLE_PENDING)) {
-        DEBUG_PRINT_LOW("Invalid state to decide on dpb-opb split");
-        return OMX_ErrorNone;
-    }
-
     // Downscalar is not supported
     is_downscalar_enabled = false;
 
@@ -1087,7 +1080,7 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode(bool is_downscalar_enabled)
         if (dpb_bit_depth == MSM_VIDC_BIT_DEPTH_10) {
             enable_split = true;
             dpb_color_format = V4L2_MPEG_VIDC_VIDEO_DPB_COLOR_FMT_TP10_UBWC;
-            if(is_flexible_format){ // if flexible formats are expected, QCom_P010 is set for 10bit cases here
+            if(is_flexible_format){ // if flexible formats are expected, P010 is set for 10bit cases here
                  drv_ctx.output_format = VDEC_YUV_FORMAT_P010_VENUS;
                  capture_capability = V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010;
                  capability_changed = true;
@@ -1109,6 +1102,9 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode(bool is_downscalar_enabled)
 
             if (dither_enable) {
                 dpb_color_format = V4L2_MPEG_VIDC_VIDEO_DPB_COLOR_FMT_TP10_UBWC;
+                capture_capability = m_disable_ubwc_mode ?
+                            V4L2_PIX_FMT_NV12 : V4L2_PIX_FMT_NV12_UBWC;
+                capability_changed = true;
             } else {
                 drv_ctx.output_format = VDEC_YUV_FORMAT_NV12_TP10_UBWC;
                 capture_capability = V4L2_PIX_FMT_NV12_TP10_UBWC;
@@ -1137,7 +1133,12 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode(bool is_downscalar_enabled)
             return OMX_ErrorUnsupportedSetting;
         }
     }
-
+    // Check the component for its valid current state
+    if (!BITMASK_PRESENT(&m_flags ,OMX_COMPONENT_IDLE_PENDING) &&
+        !BITMASK_PRESENT(&m_flags, OMX_COMPONENT_OUTPUT_ENABLE_PENDING)) {
+        DEBUG_PRINT_LOW("Invalid state to decide on dpb-opb split");
+        return OMX_ErrorNone;
+    }
     eRet = set_dpb(enable_split, dpb_color_format);
     if (eRet) {
         DEBUG_PRINT_HIGH("Failed to set DPB buffer mode: %d", eRet);
@@ -1150,8 +1151,8 @@ bool omx_vdec::check_supported_flexible_formats(OMX_COLOR_FORMATTYPE required_fo
 {
     if(required_format == (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m ||
          required_format == (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420SemiPlanarP010Venus) {
-         //for now, the flexible formats should be QCOM_NV12 by default for 8bit cases
-         //it will change to QCOM_P010 after 10bit port-reconfig accordingly
+         //for now, the flexible formats should be NV12 by default for 8bit cases
+         //it will change to P010 after 10bit port-reconfig accordingly
        return TRUE;
     }
     else {
@@ -9022,19 +9023,36 @@ OMX_ERRORTYPE omx_vdec::update_portdef(OMX_PARAM_PORTDEFINITIONTYPE *portDefn)
         portDefn->nBufferCountMin = MIN_NUM_INPUT_OUTPUT_EXTRADATA_BUFFERS;
         portDefn->nBufferCountActual = MIN_NUM_INPUT_OUTPUT_EXTRADATA_BUFFERS;
         portDefn->eDir =  OMX_DirOutput;
+        portDefn->format.video.nFrameHeight =  drv_ctx.video_resolution.frame_height;
+        portDefn->format.video.nFrameWidth  =  drv_ctx.video_resolution.frame_width;
+        portDefn->format.video.nStride  = drv_ctx.video_resolution.stride;
+        portDefn->format.video.nSliceHeight = drv_ctx.video_resolution.scan_lines;
+        portDefn->format.video.eCompressionFormat = OMX_VIDEO_CodingUnused;
+        portDefn->format.video.eColorFormat = OMX_COLOR_FormatUnused;
+        DEBUG_PRINT_LOW(" get_parameter: Port idx %d nBufSize %u nBufCnt %u",
+                (int)portDefn->nPortIndex,
+                (unsigned int)portDefn->nBufferSize,
+                (unsigned int)portDefn->nBufferCountActual);
+        return eRet;
     } else {
         portDefn->eDir = OMX_DirMax;
         DEBUG_PRINT_LOW(" get_parameter: Bad Port idx %d",
                 (int)portDefn->nPortIndex);
         eRet = OMX_ErrorBadPortIndex;
     }
+    if (in_reconfig) {
+        m_extradata_info.output_crop_rect.nLeft = 0;
+        m_extradata_info.output_crop_rect.nTop = 0;
+        m_extradata_info.output_crop_rect.nWidth = fmt.fmt.pix_mp.width;
+        m_extradata_info.output_crop_rect.nHeight = fmt.fmt.pix_mp.height;
+    }
     update_resolution(fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
         fmt.fmt.pix_mp.plane_fmt[0].bytesperline, fmt.fmt.pix_mp.plane_fmt[0].reserved[0]);
 
-        portDefn->format.video.nFrameHeight =  drv_ctx.video_resolution.frame_height;
-        portDefn->format.video.nFrameWidth  =  drv_ctx.video_resolution.frame_width;
-        portDefn->format.video.nStride = drv_ctx.video_resolution.stride;
-        portDefn->format.video.nSliceHeight = drv_ctx.video_resolution.scan_lines;
+    portDefn->format.video.nFrameHeight =  drv_ctx.video_resolution.frame_height;
+    portDefn->format.video.nFrameWidth  =  drv_ctx.video_resolution.frame_width;
+    portDefn->format.video.nStride = drv_ctx.video_resolution.stride;
+    portDefn->format.video.nSliceHeight = drv_ctx.video_resolution.scan_lines;
 
     if ((portDefn->format.video.eColorFormat == OMX_COLOR_FormatYUV420Planar) ||
        (portDefn->format.video.eColorFormat == OMX_COLOR_FormatYUV420SemiPlanar)) {

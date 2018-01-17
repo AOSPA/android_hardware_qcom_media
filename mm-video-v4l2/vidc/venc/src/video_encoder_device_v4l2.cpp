@@ -3868,7 +3868,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                                 } else {
                                     DEBUG_PRINT_INFO("venc_empty_buf: Will convert 601-FR to 709");
                                     fmt.fmt.pix_mp.colorspace = V4L2_COLORSPACE_REC709;
-                                    venc_set_colorspace(MSM_VIDC_BT709_5, 1,
+                                    venc_set_colorspace(MSM_VIDC_BT709_5, 0,
                                             MSM_VIDC_TRANSFER_BT709_5, MSM_VIDC_MATRIX_BT_709_5);
                                 }
                             } else {
@@ -4133,7 +4133,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
          m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_UBWC)) {
         if (bframe_implicitly_enabled) {
             DEBUG_PRINT_HIGH("Disabling implicitly enabled B-frames");
-            if (!venc_set_intra_period(intra_period.num_pframes, 0)) {
+            if (!_venc_set_intra_period(intra_period.num_pframes, 0)) {
                 DEBUG_PRINT_ERROR("Failed to set nPframes/nBframes");
                 return OMX_ErrorUndefined;
             }
@@ -4146,7 +4146,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
         int extradata_index = venc_get_index_from_fd(input_extradata_info.m_ion_dev,fd);
         if (extradata_index < 0 ) {
                 DEBUG_PRINT_ERROR("Extradata index calculation went wrong for fd = %d", fd);
-                return OMX_ErrorBadParameter;
+                return false;
             }
 
         plane[extra_idx].bytesused = 0;
@@ -5103,16 +5103,20 @@ bool venc_dev::venc_reconfigure_intra_period()
 
 bool venc_dev::venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
 {
-
     DEBUG_PRINT_LOW("venc_set_intra_period: nPFrames = %u, nBFrames: %u", (unsigned int)nPFrames, (unsigned int)nBFrames);
-    int rc;
-    struct v4l2_control control;
-    char property_value[PROPERTY_VALUE_MAX] = {0};
 
     if ((streaming[OUTPUT_PORT] || streaming[CAPTURE_PORT]) && (intra_period.num_bframes != nBFrames)) {
         DEBUG_PRINT_ERROR("Invalid settings, Cannot change B frame count dynamically");
         return false;
     }
+    return _venc_set_intra_period(nPFrames, nBFrames);
+}
+
+bool venc_dev::_venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
+{
+    int rc;
+    struct v4l2_control control;
+    char property_value[PROPERTY_VALUE_MAX] = {0};
 
     if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264 &&
         m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC) {
@@ -7330,10 +7334,10 @@ bool venc_dev::venc_set_hdr_info(const MasteringDisplay& mastering_disp_info,
     for (int i = 0; i < 3; i++) {
         int first_idx = 2*i+1;
         int second_idx = 2*i+2;
-        ctrl[first_idx].id = RGB_PRIMARY_TABLE[first_idx];
+        ctrl[first_idx].id = RGB_PRIMARY_TABLE[first_idx-1];
         ctrl[first_idx].value = mastering_disp_info.primaries.rgbPrimaries[i][0];
 
-        ctrl[second_idx].id = RGB_PRIMARY_TABLE[second_idx];
+        ctrl[second_idx].id = RGB_PRIMARY_TABLE[second_idx-1];
         ctrl[second_idx].value = mastering_disp_info.primaries.rgbPrimaries[i][1];
     }
 
