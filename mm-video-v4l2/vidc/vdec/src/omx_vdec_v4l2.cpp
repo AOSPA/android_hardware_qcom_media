@@ -1169,6 +1169,26 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode(bool split_opb_dpb_with_same_colo
             if (dither_enable) {
                 //split DPB-OPB
                 //DPB -> TP10UBWC, OPB -> UBWC
+
+                if (capture_capability != V4L2_PIX_FMT_NV12_UBWC) {
+                    drv_ctx.output_format = VDEC_YUV_FORMAT_NV12_UBWC;
+                    capture_capability = V4L2_PIX_FMT_NV12_UBWC;
+
+                    memset(&fmt, 0x0, sizeof(struct v4l2_format));
+                    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+                    rc = ioctl(drv_ctx.video_driver_fd, VIDIOC_G_FMT, &fmt);
+                    if (rc) {
+                        DEBUG_PRINT_ERROR("%s: Failed get format on capture mplane", __func__);
+                        return OMX_ErrorUnsupportedSetting;
+                    }
+                    fmt.fmt.pix_mp.pixelformat = capture_capability;
+                    rc = ioctl(drv_ctx.video_driver_fd, VIDIOC_S_FMT, &fmt);
+                    if (rc) {
+                        DEBUG_PRINT_ERROR("%s: Failed set format on capture mplane", __func__);
+                        return OMX_ErrorUnsupportedSetting;
+                    }
+                }
+
                 eRet = set_dpb(true, V4L2_MPEG_VIDC_VIDEO_DPB_COLOR_FMT_TP10_UBWC);
             } else {
                 //combined DPB-OPB
@@ -3595,8 +3615,8 @@ bool omx_vdec::post_event(unsigned long p1,
 }
 
 static int get_max_h264_level() {
-#ifdef MAX_H264_LEVEL_4
-    return OMX_VIDEO_AVCLevel4;
+#ifdef MAX_H264_LEVEL_42
+    return OMX_VIDEO_AVCLevel42;
 #elif MAX_H264_LEVEL_51
     return OMX_VIDEO_AVCLevel51;
 #elif MAX_H264_LEVEL_52
@@ -3622,8 +3642,12 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
             } else if (profileLevelType->nProfileIndex == 2) {
                 profileLevelType->eProfile = OMX_VIDEO_AVCProfileHigh;
             } else if (profileLevelType->nProfileIndex == 3) {
-                profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedBaseline;
+                profileLevelType->eProfile = OMX_VIDEO_AVCProfileConstrainedBaseline;
             } else if (profileLevelType->nProfileIndex == 4) {
+                profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedBaseline;
+            } else if (profileLevelType->nProfileIndex == 5) {
+                profileLevelType->eProfile = OMX_VIDEO_AVCProfileConstrainedHigh;
+            } else if (profileLevelType->nProfileIndex == 6) {
                 profileLevelType->eProfile = QOMX_VIDEO_AVCProfileConstrainedHigh;
             } else {
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoProfileLevelQuerySupported nProfileIndex ret NoMore %u",
@@ -6590,30 +6614,47 @@ OMX_ERRORTYPE omx_vdec::free_output_buffer(OMX_BUFFERHEADERTYPE *bufferHdr)
 #endif
                 if (drv_ctx.ptr_outputbuffer[index].pmem_fd > 0
                     && !ouput_egl_buffers && !m_use_output_pmem) {
-                    if (drv_ctx.op_buf_map_info[index].free_buffer) {
+                    if (drv_ctx.op_buf_map_info != NULL) {
+                        if (drv_ctx.op_buf_map_info[index].free_buffer) {
+                            if (!secure_mode) {
+                                DEBUG_PRINT_LOW("unmap the output buffer fd = %d",
+                                        drv_ctx.ptr_outputbuffer[0].pmem_fd);
+                                DEBUG_PRINT_LOW("unmap the ouput buffer size=%u  address = %p",
+                                        (unsigned int)drv_ctx.op_buf_map_info[index].map_size,
+                                        drv_ctx.op_buf_map_info[index].base_address);
+                                munmap (drv_ctx.op_buf_map_info[index].base_address,
+                                        drv_ctx.op_buf_map_info[index].map_size);
+                            }
+                            close (drv_ctx.ptr_outputbuffer[index].pmem_fd);
+                            drv_ctx.ptr_outputbuffer[index].pmem_fd = -1;
+#ifdef USE_ION
+                            free_ion_memory(&drv_ctx.op_buf_ion_info[index]);
+#endif
+                        } else {
+                            drv_ctx.op_buf_ion_info[index].ion_device_fd = -1;
+                            drv_ctx.op_buf_ion_info[index].ion_alloc_data.handle = 0;
+                            drv_ctx.op_buf_ion_info[index].fd_ion_data.fd = -1;
+                        }
+                        drv_ctx.op_buf_map_info[index].free_buffer = false;
+                        drv_ctx.op_buf_map_info[index].base_address = NULL;
+                        drv_ctx.op_buf_map_info[index].map_size = 0;
+                        drv_ctx.op_buf_map_info[index].offset = 0;
+                    } else {
                         if (!secure_mode) {
                             DEBUG_PRINT_LOW("unmap the output buffer fd = %d",
-                                    drv_ctx.ptr_outputbuffer[0].pmem_fd);
+                                    drv_ctx.ptr_outputbuffer[index].pmem_fd);
                             DEBUG_PRINT_LOW("unmap the ouput buffer size=%u  address = %p",
-                                    (unsigned int)drv_ctx.op_buf_map_info[index].map_size,
-                                    drv_ctx.op_buf_map_info[index].base_address);
-                            munmap (drv_ctx.op_buf_map_info[index].base_address,
-                                    drv_ctx.op_buf_map_info[index].map_size);
+                                    (unsigned int)drv_ctx.ptr_outputbuffer[index].mmaped_size * drv_ctx.op_buf.actualcount,
+                                    drv_ctx.ptr_outputbuffer[index].bufferaddr);
+                            munmap (drv_ctx.ptr_outputbuffer[index].bufferaddr,
+                                    drv_ctx.ptr_outputbuffer[index].mmaped_size * drv_ctx.op_buf.actualcount);
                         }
                         close (drv_ctx.ptr_outputbuffer[index].pmem_fd);
                         drv_ctx.ptr_outputbuffer[index].pmem_fd = -1;
 #ifdef USE_ION
                         free_ion_memory(&drv_ctx.op_buf_ion_info[index]);
 #endif
-                    } else {
-                        drv_ctx.op_buf_ion_info[index].ion_device_fd = -1;
-                        drv_ctx.op_buf_ion_info[index].ion_alloc_data.handle = 0;
-                        drv_ctx.op_buf_ion_info[index].fd_ion_data.fd = -1;
                     }
-                    drv_ctx.op_buf_map_info[index].free_buffer = false;
-                    drv_ctx.op_buf_map_info[index].base_address = NULL;
-                    drv_ctx.op_buf_map_info[index].map_size = 0;
-                    drv_ctx.op_buf_map_info[index].offset = 0;
                 }
 #ifdef _ANDROID_
             }
@@ -10738,9 +10779,11 @@ OMX_ERRORTYPE omx_vdec::allocate_output_headers()
         drv_ctx.ptr_respbuffer = (struct vdec_output_frameinfo  *)\
                      calloc (sizeof (struct vdec_output_frameinfo),
                              drv_ctx.op_buf.actualcount);
-        if (!drv_ctx.ptr_outputbuffer || !drv_ctx.ptr_respbuffer) {
-            DEBUG_PRINT_ERROR("Failed to alloc drv_ctx.ptr_outputbuffer or drv_ctx.ptr_respbuffer");
-            free(pPtr);
+        if (!pPtr || !drv_ctx.ptr_outputbuffer || !drv_ctx.ptr_respbuffer) {
+            DEBUG_PRINT_ERROR("allocate_output_headers: allocation failed");
+            free(pPtr); pPtr = NULL;
+            free(drv_ctx.ptr_outputbuffer); drv_ctx.ptr_outputbuffer = NULL;
+            free(drv_ctx.ptr_respbuffer); drv_ctx.ptr_respbuffer = NULL;
             return OMX_ErrorInsufficientResources;
         }
 
@@ -10749,7 +10792,9 @@ OMX_ERRORTYPE omx_vdec::allocate_output_headers()
                       calloc (sizeof(struct vdec_ion),drv_ctx.op_buf.actualcount);
         if (!drv_ctx.op_buf_ion_info) {
             DEBUG_PRINT_ERROR("Failed to alloc drv_ctx.op_buf_ion_info");
-            free(pPtr);
+            free(pPtr); pPtr = NULL;
+            free(drv_ctx.ptr_outputbuffer); drv_ctx.ptr_outputbuffer = NULL;
+            free(drv_ctx.ptr_respbuffer); drv_ctx.ptr_respbuffer = NULL;
             return OMX_ErrorInsufficientResources;
         }
 #endif
@@ -11634,6 +11679,9 @@ void omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
                     break;
                 case MSM_VIDC_EXTRADATA_S3D_FRAME_PACKING:
                     struct msm_vidc_s3d_frame_packing_payload *s3d_frame_packing_payload;
+                    if (data->nDataSize < sizeof(struct msm_vidc_s3d_frame_packing_payload)) {
+                        break;
+                    }
                     s3d_frame_packing_payload = (struct msm_vidc_s3d_frame_packing_payload *)(void *)data->data;
                     switch (s3d_frame_packing_payload->fpa_type) {
                         case MSM_VIDC_FRAMEPACK_SIDE_BY_SIDE:
