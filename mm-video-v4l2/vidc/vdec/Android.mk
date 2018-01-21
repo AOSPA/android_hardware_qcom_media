@@ -24,8 +24,8 @@ libmm-vdec-def += -D_ANDROID_ICS_
 libmm-vdec-def += -DPROCESS_EXTRADATA_IN_OUTPUT_PORT
 
 TARGETS_THAT_HAVE_VENUS_HEVC := apq8084 msm8994 msm8996
-TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8953 msm8998 sdm660 sdm845 msmpeafowl sdm670
-TARGETS_THAT_NEED_SW_VDEC := msm8937 sdm845 msmpeafowl sdm670
+TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8953 msm8998 sdm660 sdm845 msmpeafowl sdm670 qcs605
+TARGETS_THAT_NEED_SW_VDEC := msm8937 sdm845 msmpeafowl sdm670 qcs605
 
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_HAVE_VENUS_HEVC)),true)
 libmm-vdec-def += -DVENUS_HEVC
@@ -62,6 +62,9 @@ libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/qcom/display
 libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/adreno
 libmm-vdec-inc          += frameworks/native/include/media/openmax
 libmm-vdec-inc          += frameworks/native/include/media/hardware
+libmm-vdec-inc          += frameworks/native/libs/nativewindow/include
+libmm-vdec-inc          += frameworks/native/libs/nativebase/include
+libmm-vdec-inc          += frameworks/native/libs/arect/include
 libmm-vdec-inc          += $(QCOM_MEDIA_ROOT)/libc2dcolorconvert
 libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/mm-video/SwVdec
 libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/mm-video/swvdec
@@ -133,8 +136,7 @@ LOCAL_C_INCLUDES              += $(libmm-vdec-inc)
 LOCAL_ADDITIONAL_DEPENDENCIES := $(libmm-vdec-add-dep)
 
 LOCAL_PRELINK_MODULE          := false
-LOCAL_SHARED_LIBRARIES        := liblog libcutils libc2dcolorconvert
-LOCAL_SHARED_LIBRARIES        += libswvdec
+LOCAL_SHARED_LIBRARIES        := liblog libcutils libc2dcolorconvert libswvdec
 LOCAL_SHARED_LIBRARIES        += libnativewindow
 
 LOCAL_SRC_FILES               := src/omx_swvdec.cpp
