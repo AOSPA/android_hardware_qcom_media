@@ -63,6 +63,10 @@ LOCAL_COPY_HEADERS      += inc/QCMetaData.h
 
 LOCAL_C_INCLUDES        := $(LOCAL_PATH)/src/common
 LOCAL_C_INCLUDES        += $(LOCAL_PATH)/inc
+
+LOCAL_HEADER_LIBRARIES := \
+        libutils_headers
+
 LOCAL_PRELINK_MODULE    := false
 LOCAL_MODULE            := libOmxCore
 LOCAL_MODULE_TAGS       := optional
@@ -91,6 +95,10 @@ include $(CLEAR_VARS)
 
 LOCAL_C_INCLUDES        := $(LOCAL_PATH)/src/common
 LOCAL_C_INCLUDES        += $(LOCAL_PATH)/inc
+
+LOCAL_HEADER_LIBRARIES := \
+        libutils_headers
+
 LOCAL_PRELINK_MODULE    := false
 LOCAL_MODULE            := libmm-omxcore
 LOCAL_MODULE_TAGS       := optional
