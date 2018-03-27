@@ -28,7 +28,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------*/
 
 #define LOG_TAG "OMX-VENDOR-EXT"
-#include <utils/Log.h>
+#include <log/log.h>
 #include "vidc_debug.h"
 
 #include "OMX_Core.h"
