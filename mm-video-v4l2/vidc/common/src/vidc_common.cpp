@@ -28,7 +28,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------*/
 #define LOG_TAG "OMX_COMMON"
 
-#include <utils/Log.h>
+#include <log/log.h>
 #include "vidc_debug.h"
 #include "vidc_common.h"
 #include "OMX_Core.h"

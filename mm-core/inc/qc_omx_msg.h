@@ -39,7 +39,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #ifdef _ENABLE_QC_MSG_LOG_
     #ifdef _ANDROID_
-        #include <utils/Log.h>
+        #include <log/log.h>
 
         #ifdef __cplusplus
         extern "C" {
@@ -79,7 +79,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     #endif // _ANDROID_
 #else
     #ifdef _ANDROID_
-        #include <utils/Log.h>
+        #include <log/log.h>
         #define DEBUG_PRINT_ERROR ALOGV
         #define DEBUG_PRINT ALOGV
         #define DEBUG_DETAIL ALOGV
