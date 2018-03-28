@@ -109,6 +109,9 @@ LOCAL_SHARED_LIBRARIES  += libc2dcolorconvert
 LOCAL_SHARED_LIBRARIES  += libqdMetaData
 LOCAL_SHARED_LIBRARIES  += libplatformconfig
 LOCAL_SHARED_LIBRARIES  += libnativewindow
+LOCAL_HEADER_LIBRARIES  := libnativebase_headers
+LOCAL_HEADER_LIBRARIES  += media_plugin_headers
+LOCAL_HEADER_LIBRARIES  += libhardware_headers
 
 LOCAL_SRC_FILES         := src/ts_parser.cpp
 LOCAL_STATIC_LIBRARIES  := libOmxVidcCommon
