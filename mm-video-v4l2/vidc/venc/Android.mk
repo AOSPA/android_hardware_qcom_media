@@ -101,6 +101,8 @@ LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
 # endif # ($(BOARD_USES_ADRENO), true)
 LOCAL_SHARED_LIBRARIES += libqdMetaData
 LOCAL_STATIC_LIBRARIES    := libOmxVidcCommon
+LOCAL_HEADER_LIBRARIES    := media_plugin_headers
+LOCAL_HEADER_LIBRARIES    += libhardware_headers
 
 LOCAL_SRC_FILES   := src/omx_video_base.cpp
 LOCAL_SRC_FILES   += src/omx_video_encoder.cpp

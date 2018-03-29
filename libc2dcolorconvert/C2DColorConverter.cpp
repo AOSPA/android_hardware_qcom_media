@@ -28,6 +28,7 @@
  */
 
 #include <C2DColorConverter.h>
+#include <pthread.h> // pthread_mutex_*
 
 C2DColorConverter::C2DColorConverter()
     : mC2DLibHandle(NULL),
