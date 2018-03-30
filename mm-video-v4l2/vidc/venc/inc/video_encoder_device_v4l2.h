@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -468,6 +468,7 @@ class venc_dev
         bool bframe_implicitly_enabled;
         bool client_req_disable_temporal_layers;
         bool client_req_turbo_mode;
+        static const unsigned int QFQPMapping[21];
 
         bool venc_query_cap(struct v4l2_queryctrl &cap);
         bool venc_validate_range(OMX_S32 id, OMX_S32 val);
