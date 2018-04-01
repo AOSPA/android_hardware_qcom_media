@@ -137,6 +137,8 @@ LOCAL_SHARED_LIBRARIES += libui
 LOCAL_SHARED_LIBRARIES += libutils
 endif
 
+LOCAL_HEADER_LIBRARIES    := media_plugin_headers
+
 # ifeq ($(BOARD_USES_ADRENO), true)
 LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
 # endif # ($(BOARD_USES_ADRENO), true)
