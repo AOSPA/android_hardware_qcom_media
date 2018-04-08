@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -85,6 +85,10 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define VENC_BFRAME_MAX_FPS         60
 #define VENC_BFRAME_MAX_WIDTH       1920
 #define VENC_BFRAME_MAX_HEIGHT      1088
+
+// Scaled quality factor - QP mapping
+#define SCALED_QUALITY_FACTOR_MAX 20
+const unsigned int venc_dev::QFQPMapping[21] = {51, 47, 43, 39, 35, 31, 28, 25, 22, 19, 16, 13, 11, 9, 7, 5, 6, 4, 3, 2};
 
 #undef LOG_TAG
 #define LOG_TAG "OMX-VENC: venc_dev"
@@ -2105,14 +2109,34 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoBitrate");
 
                 if (pParam->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
+                    // Quality factor setting
+                    unsigned int scaledQF;
+                    if (pParam->eControlRate == OMX_Video_ControlRateConstantQuality) {
+                        pParam->eControlRate = OMX_Video_ControlRateDisable;
+                        scaledQF = pParam->nQualityFactor / 5;
+                        scaledQF = (scaledQF > SCALED_QUALITY_FACTOR_MAX) ? SCALED_QUALITY_FACTOR_MAX : scaledQF;
+                    }
+
                     if (!venc_set_target_bitrate(pParam->nTargetBitrate)) {
-                        DEBUG_PRINT_ERROR("ERROR: Target Bit Rate setting failed");
+                        DEBUG_PRINT_ERROR("ERROR: Setting Target Bit Rate / Quality Factor failed");
                         return false;
                     }
 
                     if (!venc_set_ratectrl_cfg(pParam->eControlRate)) {
                         DEBUG_PRINT_ERROR("ERROR: Rate Control setting failed");
                         return false;
+                    }
+                    // Setting QP values
+                    if (((OMX_VIDEO_PARAM_BITRATETYPE*)paramData)->eControlRate == OMX_Video_ControlRateDisable) {
+                        if (venc_set_qp(QFQPMapping[scaledQF],
+                                        QFQPMapping[scaledQF],
+                                        QFQPMapping[scaledQF],
+                                        ENABLE_I_QP | ENABLE_P_QP | ENABLE_B_QP) == false) {
+                            DEBUG_PRINT_ERROR("ERROR: Setting QP values failed");
+                            return false;
+                        }
+                        DEBUG_PRINT_LOW("Rate control: %u Quality factor(client): %u scaledQF: %u",
+                            pParam->eControlRate, pParam->nQualityFactor, scaledQF);
                     }
                 } else {
                     DEBUG_PRINT_ERROR("ERROR: Invalid Port Index for OMX_IndexParamVideoBitrate");
