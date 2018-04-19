@@ -101,7 +101,7 @@ extern "C" {
 
 #define VDEC_MSG_BASE    0x0000000
 /* Codes to identify asynchronous message responses and events that driver
-  wants to communicate to the app.*/
+   wants to communicate to the app.*/
 #define VDEC_MSG_RESP_INPUT_BUFFER_DONE    (VDEC_MSG_BASE + 1)
 #define VDEC_MSG_RESP_OUTPUT_BUFFER_DONE    (VDEC_MSG_BASE + 2)
 #define VDEC_MSG_RESP_INPUT_FLUSHED    (VDEC_MSG_BASE + 3)

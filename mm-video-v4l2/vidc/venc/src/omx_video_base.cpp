@@ -4919,7 +4919,6 @@ OMX_ERRORTYPE omx_video::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVE
             (unsigned int)profileLevelType->eProfile, (unsigned int)profileLevelType->eLevel);
     return eRet;
 }
-#endif
 
 #ifdef USE_ION
 int omx_video::alloc_map_ion_memory(int size,

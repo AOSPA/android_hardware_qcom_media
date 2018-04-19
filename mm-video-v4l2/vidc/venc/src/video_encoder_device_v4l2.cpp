@@ -511,6 +511,7 @@ void* venc_dev::async_venc_message_thread (void *input)
                     DEBUG_PRINT_ERROR("ERROR: Wrong ioctl message");
                     break;
                 }
+
 #ifndef _TARGET_KERNEL_VERSION_49_
                 venc_msg.msgcode = VEN_MSG_FLUSH_OUPUT_DONE;
 #else
@@ -3850,6 +3851,7 @@ unsigned venc_dev::venc_flush( unsigned port)
             fd_list[i] = 0;
         }
     }
+
 #ifndef _TARGET_KERNEL_VERSION_49_
     enc.cmd = V4L2_ENC_QCOM_CMD_FLUSH;
 #else
