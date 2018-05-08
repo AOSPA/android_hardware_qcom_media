@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010 - 2017, The Linux Foundation. All rights reserved.
+Copyright (c) 2010 - 2018, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -312,6 +312,12 @@ void* async_message_thread (void *input)
                                                   ((tmp_profile != (int)omx->mClientSetProfile) ||
                                                    (tmp_level > (int)omx->mClientSetLevel)));
                      }
+                 }
+
+                 if (!omx->is_down_scalar_enabled && omx->m_is_split_mode &&
+                        (omx->drv_ctx.video_resolution.frame_height != ptr[0] ||
+                        omx->drv_ctx.video_resolution.frame_width != ptr[1])) {
+                     event_fields_changed = true;
                  }
 
                  if (event_fields_changed) {
@@ -718,12 +724,13 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     m_profile(0),
     client_set_fps(false),
     stereo_output_mode(HAL_NO_3D),
-    m_last_rendered_TS(0),
+    m_last_rendered_TS(-1),
     m_dec_hfr_fps(0),
     m_queued_codec_config_count(0),
     secure_scaling_to_non_secure_opb(false),
     m_force_compressed_for_dpb(true),
-    m_is_display_session(false)
+    m_is_display_session(false),
+    m_is_split_mode(false)
 {
     m_poll_efd = -1;
     drv_ctx.video_driver_fd = -1;
@@ -758,6 +765,10 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
             (int32_t *)&m_dec_hfr_fps, 0);
 
     DEBUG_PRINT_HIGH("HFR fps value = %d", m_dec_hfr_fps);
+
+    if (m_dec_hfr_fps) {
+        m_last_rendered_TS = 0;
+    }
 
     property_value[0] = '\0';
     property_get("vendor.vidc.dec.log.in", property_value, "0");
@@ -1037,6 +1048,7 @@ OMX_ERRORTYPE omx_vdec::set_dpb(bool is_split_mode, int dpb_color_format)
         DEBUG_PRINT_ERROR("Failed to set ext ctrls for opb_dpb: %d\n", rc);
         return OMX_ErrorUnsupportedSetting;
     }
+    m_is_split_mode = is_split_mode;
     return OMX_ErrorNone;
 }
 
@@ -3375,7 +3387,8 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
                             QOMX_VIDEO_AVCProfileMain,
                             QOMX_VIDEO_AVCProfileConstrainedHigh,
                             QOMX_VIDEO_AVCProfileHigh };
-    int hevc_profiles[2] = { OMX_VIDEO_HEVCProfileMain,
+    int hevc_profiles[3] = { OMX_VIDEO_HEVCProfileMain,
+                             OMX_VIDEO_HEVCProfileMain10,
                              OMX_VIDEO_HEVCProfileMain10HDR10 };
     int mpeg2_profiles[2] = { OMX_VIDEO_MPEG2ProfileSimple,
                               OMX_VIDEO_MPEG2ProfileMain};
@@ -3480,9 +3493,24 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
     /* Check if the profile is supported by driver or not  */
     /* During query caps of profile driver sends a mask of */
     /* of all v4l2 profiles supported(in the flags field)  */
-    if (!profile_level_converter::convert_omx_profile_to_v4l2(output_capability, profileLevelType->eProfile, &v4l2_profile)) {
-        DEBUG_PRINT_ERROR("Invalid profile, cannot find corresponding omx profile");
-        return OMX_ErrorHardware;
+    if(output_capability != V4L2_PIX_FMT_HEVC) {
+        if (!profile_level_converter::convert_omx_profile_to_v4l2(output_capability, profileLevelType->eProfile, &v4l2_profile)) {
+            DEBUG_PRINT_ERROR("Invalid profile, cannot find corresponding omx profile");
+            return OMX_ErrorHardware;
+        }
+    }else { //convert omx profile to v4l2 profile for HEVC Main10 and Main10HDR10 profiles,seperately
+        switch (profileLevelType->eProfile) {
+            case OMX_VIDEO_HEVCProfileMain:
+                v4l2_profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
+                break;
+            case OMX_VIDEO_HEVCProfileMain10:
+            case OMX_VIDEO_HEVCProfileMain10HDR10:
+                v4l2_profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10;
+                break;
+            default:
+                DEBUG_PRINT_ERROR("Invalid profile, cannot find corresponding omx profile");
+                return OMX_ErrorHardware;
+        }
     }
 
     if(!((profile_cap.flags >> v4l2_profile) & 0x1)) {
@@ -6954,6 +6982,13 @@ OMX_ERRORTYPE  omx_vdec::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
         return OMX_ErrorNone;
     }
 
+    if (m_error_propogated == true) {
+        DEBUG_PRINT_LOW("Return buffer in error state");
+        post_event ((unsigned long)buffer,VDEC_S_SUCCESS,
+                OMX_COMPONENT_GENERATE_EBD);
+        return OMX_ErrorNone;
+    }
+
     auto_lock l(buf_lock);
     temp_buffer = (struct vdec_bufferpayload *)buffer->pInputPortPrivate;
 
@@ -7253,6 +7288,13 @@ OMX_ERRORTYPE  omx_vdec::fill_this_buffer_proxy(
     /*Return back the output buffer to client*/
     if (m_out_bEnabled != OMX_TRUE || output_flush_progress == true || in_reconfig) {
         DEBUG_PRINT_LOW("Output Buffers return flush/disable condition");
+        buffer->nFilledLen = 0;
+        print_omx_buffer("FBD in FTBProxy", buffer);
+        m_cb.FillBufferDone (hComp,m_app_data,buffer);
+        return OMX_ErrorNone;
+    }
+    if (m_error_propogated == true) {
+        DEBUG_PRINT_LOW("Return buffers in error state");
         buffer->nFilledLen = 0;
         print_omx_buffer("FBD in FTBProxy", buffer);
         m_cb.FillBufferDone (hComp,m_app_data,buffer);
@@ -8028,7 +8070,7 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
         il_buffer = client_buffers.get_il_buf_hdr(buffer);
         OMX_U32 current_framerate = (int)(drv_ctx.frame_rate.fps_numerator / drv_ctx.frame_rate.fps_denominator);
 
-        if (il_buffer && m_dec_hfr_fps > 0) {
+        if (il_buffer && m_last_rendered_TS >= 0) {
             OMX_TICKS ts_delta = (OMX_TICKS)llabs(il_buffer->nTimeStamp - m_last_rendered_TS);
             // Convert fps into ms value. 1 sec = 1000000 ms.
             OMX_U64 target_ts_delta = m_dec_hfr_fps ? 1000000 / m_dec_hfr_fps : ts_delta;
@@ -8080,8 +8122,9 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
                     }
                 }
             }
-            if (refresh_rate > m_dec_hfr_fps) {
-                refresh_rate = m_dec_hfr_fps;
+            OMX_U32 fps_limit = m_dec_hfr_fps ? (OMX_U32)m_dec_hfr_fps : 60;
+            if (refresh_rate > fps_limit) {
+                refresh_rate = fps_limit;
             }
             DEBUG_PRINT_LOW("frc set refresh_rate %f, frame %d", refresh_rate, proc_frms);
             OMX_U32 buf_index = buffer - m_out_mem_ptr;
@@ -8484,6 +8527,11 @@ int omx_vdec::async_message_process (void *context, void* message)
                                            OMX_IndexConfigCommonOutputCrop,
                                            OMX_COMPONENT_GENERATE_PORT_RECONFIG);
                            reconfig_event_sent = true;
+                       } else {
+                           /* Update C2D with new resolution */
+                           if (!omx->client_buffers.update_buffer_req()) {
+                               DEBUG_PRINT_ERROR("Setting C2D buffer requirements failed");
+                           }
                        }
                    }
 
@@ -11128,7 +11176,8 @@ bool omx_vdec::allocate_color_convert_buf::update_buffer_req()
 
     if (status != false) {
         if (omx->drv_ctx.output_format != VDEC_YUV_FORMAT_NV12 &&
-            ColorFormat != OMX_COLOR_FormatYUV420Planar) {
+            (ColorFormat != OMX_COLOR_FormatYUV420Planar &&
+             ColorFormat != OMX_COLOR_FormatYUV420SemiPlanar)) {
             DEBUG_PRINT_ERROR("update_buffer_req: Unsupported color conversion");
             status = false;
         } else {
