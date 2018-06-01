@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2017, Linux Foundation. All rights reserved.
+Copyright (c) 2010-2018, Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -1582,6 +1582,16 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     }
 
                     memcpy(portDefn, &m_sOutPortDef, sizeof(m_sOutPortDef));
+                    // Tiling in HW expects output port def to be aligned to tile size
+                    // At the same time, FWK needs original WxH for various purposes
+                    // Sending input WxH as output port def WxH to FWK
+                    if (m_sOutPortDef.format.video.eCompressionFormat ==
+                            OMX_VIDEO_CodingHEIC) {
+                        portDefn->format.video.nFrameWidth =
+                            m_sInPortDef.format.video.nFrameWidth;
+                        portDefn->format.video.nFrameHeight =
+                            m_sInPortDef.format.video.nFrameHeight;
+                    }
 
                     if (secure_session || allocate_native_handle) {
                         portDefn->nBufferSize =
@@ -1704,6 +1714,15 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 QOMX_VIDEO_PARAM_TMETYPE* pParam = (QOMX_VIDEO_PARAM_TMETYPE*)paramData;
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoTme");
                 memcpy(pParam, &m_sParamTME, sizeof(m_sParamTME));
+                break;
+            }
+        case OMX_IndexParamVideoAndroidImageGrid:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE);
+                OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE* pParam =
+                        (OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE*)paramData;
+                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoAndroidImageGrid");
+                memcpy(pParam, &m_sParamAndroidImageGrid, sizeof(m_sParamAndroidImageGrid));
                 break;
             }
         case OMX_IndexParamVideoProfileLevelQuerySupported:
@@ -4331,7 +4350,8 @@ OMX_ERRORTYPE  omx_video::component_role_enum(OMX_IN OMX_HANDLETYPE hComp,
             DEBUG_PRINT_ERROR("ERROR: No more roles");
             eRet = OMX_ErrorNoMore;
         }
-    } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc", OMX_MAX_STRINGNAME_SIZE)) {
+    } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc", OMX_MAX_STRINGNAME_SIZE) ||
+               !strncmp((char*)m_nkind, "OMX.qcom.video.encoder.heic", OMX_MAX_STRINGNAME_SIZE)) {
         if ((0 == index) && role) {
             strlcpy((char *)role, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
             DEBUG_PRINT_LOW("component_role_enum: role %s", role);
