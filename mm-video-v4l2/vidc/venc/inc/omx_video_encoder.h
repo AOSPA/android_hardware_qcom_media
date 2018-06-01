@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2017, The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -36,6 +36,9 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 extern "C" {
     OMX_API void * get_omx_component_factory_fn(void);
 }
+
+#define DEFAULT_TILE_DIMENSION 512
+#define DEFAULT_TILE_COUNT 40
 
 class omx_venc: public omx_video
 {
