@@ -2115,13 +2115,13 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoBitrate");
 
                 if (pParam->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
-                    if (!venc_set_target_bitrate(pParam->nTargetBitrate)) {
-                        DEBUG_PRINT_ERROR("ERROR: Setting Target Bit Rate / Quality Factor failed");
+                    if (!venc_set_ratectrl_cfg(pParam->eControlRate)) {
+                        DEBUG_PRINT_ERROR("ERROR: Rate Control setting failed");
                         return false;
                     }
 
-                    if (!venc_set_ratectrl_cfg(pParam->eControlRate)) {
-                        DEBUG_PRINT_ERROR("ERROR: Rate Control setting failed");
+                    if (!venc_set_target_bitrate(pParam->nTargetBitrate)) {
+                        DEBUG_PRINT_ERROR("ERROR: Setting Target Bit Rate / Quality Factor failed");
                         return false;
                     }
                 } else {
