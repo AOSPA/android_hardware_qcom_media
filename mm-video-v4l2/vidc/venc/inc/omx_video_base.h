@@ -314,6 +314,7 @@ class omx_video: public qc_omx_component
         virtual int dev_extradata_log_buffers(char *buffer_addr, bool input) = 0;
         virtual bool dev_get_hevc_profile(OMX_U32*) = 0;
         virtual bool dev_handle_client_input_extradata(void*) = 0;
+        virtual void dev_get_color_format_as_string(char * buf, int buf_len, unsigned colorformat) = 0;
         OMX_ERRORTYPE component_role_enum(
                 OMX_HANDLETYPE hComp,
                 OMX_U8 *role,
@@ -798,6 +799,11 @@ class omx_video: public qc_omx_component
         char m_platform[OMX_MAX_STRINGNAME_SIZE];
 
         bool m_buffer_freed;
+        bool profile_mode;
+        int profile_frame_count;
+        OMX_U64 profile_start_time;
+        OMX_U64 profile_last_time;
+        bool profile_etb();
 };
 
 #endif // __OMX_VIDEO_BASE_H__

@@ -297,6 +297,14 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     OMX_INIT_STRUCT(&m_sIntraperiod, QOMX_VIDEO_INTRAPERIODTYPE);
     m_sIntraperiod.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
     m_sIntraperiod.nPFrames = (m_sConfigFramerate.xEncodeFramerate * 2) - 1;
+    /* Consider a scenario where client does get of this and does not modify this
+       and does a set. Then if by default if this is 0 we assume that client is explicitly
+       requesting disabling of B-Frames and our logic to automatically enable bFrames will
+       fail(We do not enable bframes if there is a set of this param with 0 value). We do
+       not want this to happen(also all our default values support auto enabling of B-Frames).
+       We always take care of scenarios where bframes need to be disabled */
+    m_sIntraperiod.nBFrames = 1;
+
 
     OMX_INIT_STRUCT(&m_sErrorCorrection, OMX_VIDEO_PARAM_ERRORCORRECTIONTYPE);
     m_sErrorCorrection.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
@@ -445,8 +453,9 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sParamAVC.bEnableFMO = OMX_FALSE;
     m_sParamAVC.bEnableASO = OMX_FALSE;
     m_sParamAVC.bEnableRS = OMX_FALSE;
-    m_sParamAVC.eProfile = OMX_VIDEO_AVCProfileBaseline;
-    m_sParamAVC.eLevel = OMX_VIDEO_AVCLevel1;
+    /* Since nBFrames = 1 by default, we need a profile which supports B-Frames */
+    m_sParamAVC.eProfile = OMX_VIDEO_AVCProfileHigh;
+    m_sParamAVC.eLevel = OMX_VIDEO_AVCLevel4;
     m_sParamAVC.nAllowedPictureTypes = 2;
     m_sParamAVC.bFrameMBsOnly = OMX_FALSE;
     m_sParamAVC.bMBAFF = OMX_FALSE;
@@ -623,11 +632,12 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_PARAM_PORTDEFINITIONTYPE);
                 OMX_PARAM_PORTDEFINITIONTYPE *portDefn;
                 portDefn = (OMX_PARAM_PORTDEFINITIONTYPE *) paramData;
-
-                DEBUG_PRINT_HIGH("set_parameter: OMX_IndexParamPortDefinition: port %d, wxh %dx%d, min %d, actual %d, size %d, colorformat %#x, compression format %#x",
+                char colorFormatStr[200];
+                dev_get_color_format_as_string(colorFormatStr, sizeof(colorFormatStr), portDefn->format.video.eColorFormat);
+                DEBUG_PRINT_HIGH("set_parameter: OMX_IndexParamPortDefinition: port %d, wxh %dx%d, min %d, actual %d, size %d, colorformat %#x (%s), compression format %#x",
                     portDefn->nPortIndex, portDefn->format.video.nFrameWidth, portDefn->format.video.nFrameHeight,
                     portDefn->nBufferCountMin, portDefn->nBufferCountActual, portDefn->nBufferSize,
-                    portDefn->format.video.eColorFormat, portDefn->format.video.eCompressionFormat);
+                    portDefn->format.video.eColorFormat, colorFormatStr, portDefn->format.video.eCompressionFormat);
 
                 if (PORT_INDEX_IN == portDefn->nPortIndex) {
                     if (portDefn->nBufferCountActual > MAX_NUM_INPUT_BUFFERS) {
@@ -752,16 +762,18 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_PORTFORMATTYPE);
                 OMX_VIDEO_PARAM_PORTFORMATTYPE *portFmt =
                     (OMX_VIDEO_PARAM_PORTFORMATTYPE *)paramData;
-                DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoPortFormat %d",
-                        portFmt->eColorFormat);
+                char colorFormatStr[200];
+                dev_get_color_format_as_string(colorFormatStr, sizeof(colorFormatStr), portFmt->eColorFormat);
+                DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoPortFormat %x (%s)",
+                        portFmt->eColorFormat, colorFormatStr);
                 //set the driver with the corresponding values
                 if (PORT_INDEX_IN == portFmt->nPortIndex) {
                     if (handle->venc_set_param(paramData,OMX_IndexParamVideoPortFormat) != true) {
                         return OMX_ErrorUnsupportedSetting;
                     }
 
-                    DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoPortFormat %d",
-                            portFmt->eColorFormat);
+                    DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoPortFormat %x (%s)",
+                            portFmt->eColorFormat, colorFormatStr);
                     update_profile_level(); //framerate
 
 #ifdef _ANDROID_ICS_
@@ -845,11 +857,7 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     return OMX_ErrorUnsupportedSetting;
                 }
                 memcpy(&m_sParamAVC,pParam, sizeof(struct OMX_VIDEO_PARAM_AVCTYPE));
-                m_sIntraperiod.nPFrames = m_sParamAVC.nPFrames;
-                if (pParam->nBFrames)
-                    m_sIntraperiod.nBFrames = m_sParamAVC.nBFrames = avc_param.nBFrames;
-                else
-                    m_sIntraperiod.nBFrames = m_sParamAVC.nBFrames;
+                /* nBFrames is only supported through QOMX_IndexConfigVideoIntraperiod. Don't set here */
                 break;
             }
         case (OMX_INDEXTYPE)OMX_IndexParamVideoVp8:
@@ -1504,16 +1512,6 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 }
                 break;
             }
-        case OMX_QcomIndexParamVideoHybridHierpMode:
-            {
-                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE);
-               if(!handle->venc_set_param(paramData,
-                         (OMX_INDEXTYPE)OMX_QcomIndexParamVideoHybridHierpMode)) {
-                   DEBUG_PRINT_ERROR("Request to Enable Hybrid Hier-P failed");
-                   return OMX_ErrorUnsupportedSetting;
-                }
-                break;
-            }
         case OMX_QcomIndexParamBatchSize:
             {
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_PARAM_U32TYPE);
@@ -2151,6 +2149,25 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
 
                 return set_vendor_extension_config(ext);
             }
+        case OMX_IndexConfigVideoNalSize:
+            {
+                VALIDATE_OMX_PARAM_DATA(configData, OMX_VIDEO_CONFIG_NALSIZE);
+
+                OMX_VIDEO_CONFIG_NALSIZE* pParam =
+                    reinterpret_cast<OMX_VIDEO_CONFIG_NALSIZE*>(configData);
+                DEBUG_PRINT_HIGH("set_config(): OMX_IndexConfigVideoNalSize (%u)", (unsigned int)pParam->nNaluBytes);
+
+                if (pParam->nPortIndex == PORT_INDEX_OUT) {
+                    if (handle->venc_set_config(configData, OMX_IndexConfigVideoNalSize) != true) {
+                        DEBUG_PRINT_LOW("Setting OMX_IndexConfigVideoBitrate failed");
+                        return OMX_ErrorUnsupportedSetting;
+                    }
+                } else {
+                    DEBUG_PRINT_ERROR("ERROR: Unsupported port index: %u", (unsigned int)pParam->nPortIndex);
+                    return OMX_ErrorBadPortIndex;
+                }
+                break;
+            }
 
         default:
             DEBUG_PRINT_ERROR("ERROR: unsupported index %d", (int) configIndex);
@@ -2384,6 +2401,51 @@ OMX_ERRORTYPE omx_venc::dev_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILEL
 
 bool omx_venc::dev_get_supported_color_format(unsigned index, OMX_U32 *colorFormat) {
     return handle->venc_get_supported_color_format(index, colorFormat);
+}
+
+void omx_venc::dev_get_color_format_as_string(char * buf, int buf_len, unsigned colorformat) {
+    // Try to match with OMX_QCOM_COLOR_FORMATTYPE
+    switch (colorformat) {
+        case QOMX_COLOR_FormatYVU420SemiPlanar:
+            snprintf(buf, buf_len, "QOMX_COLOR_FormatYVU420SemiPlanar");
+            break;
+        case QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka:
+            snprintf(buf, buf_len, "QOMX_COLOR_FormatYVU420PackedSemiPlanar32m4ka");
+            break;
+        case QOMX_COLOR_FormatYUV420PackedSemiPlanar16m2ka:
+            snprintf(buf, buf_len, "QOMX_COLOR_FormatYUV420PackedSemiPlanar16m2ka");
+            break;
+        case QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka:
+            snprintf(buf, buf_len, "QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka");
+            break;
+        case QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m:
+            snprintf(buf, buf_len, "QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m");
+            break;
+        case QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mMultiView:
+            snprintf(buf, buf_len, "QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mMultiView");
+            break;
+        case QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed:
+            snprintf(buf, buf_len, "QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed");
+            break;
+        case QOMX_COLOR_Format32bitRGBA8888:
+            snprintf(buf, buf_len, "QOMX_COLOR_Format32bitRGBA8888");
+            break;
+        case QOMX_COLOR_Format32bitRGBA8888Compressed:
+            snprintf(buf, buf_len, "QOMX_COLOR_Format32bitRGBA8888Compressed");
+            break;
+        case QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed:
+            snprintf(buf, buf_len, "QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m10bitCompressed");
+            break;
+        case QOMX_COLOR_FORMATYUV420SemiPlanarP010Venus:
+            snprintf(buf, buf_len, "QOMX_COLOR_FORMATYUV420SemiPlanarP010Venus");
+            break;
+        case QOMX_COLOR_FormatAndroidOpaque:
+            snprintf(buf, buf_len, "QOMX_COLOR_FormatAndroidOpaque");
+            break;
+        default:
+            snprintf(buf, buf_len, "no match found in OMX_QCOM_COLOR_FORMATTYPE");
+            return;
+    }
 }
 
 bool omx_venc::dev_loaded_start()

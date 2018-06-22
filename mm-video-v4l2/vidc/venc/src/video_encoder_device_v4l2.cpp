@@ -87,6 +87,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define VENC_BFRAME_MAX_FPS         60
 #define VENC_BFRAME_MAX_WIDTH       1920
 #define VENC_BFRAME_MAX_HEIGHT      1088
+#define VENC_INFINITE_GOP 0xFFFFFFF
 
 #undef LOG_TAG
 #define LOG_TAG "OMX-VENC: venc_dev"
@@ -597,7 +598,7 @@ void venc_dev::append_extradata_mbidata(OMX_OTHER_EXTRADATATYPE *p_extra,
             struct msm_vidc_extradata_header *p_extradata)
 {
     OMX_U32 payloadSize = append_mbi_extradata(&p_extra->data, p_extradata);
-    p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + payloadSize, 4);
+    p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + payloadSize - sizeof(unsigned int), 4);
     p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
     p_extra->nPortIndex = OMX_DirOutput;
     p_extra->eType = (OMX_EXTRADATATYPE)OMX_ExtraDataVideoEncoderMBInfo;
@@ -608,7 +609,7 @@ void venc_dev::append_extradata_mbidata(OMX_OTHER_EXTRADATATYPE *p_extra,
 void venc_dev::append_extradata_ltrinfo(OMX_OTHER_EXTRADATATYPE *p_extra,
             struct msm_vidc_extradata_header *p_extradata)
 {
-    p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + p_extradata->data_size, 4);
+    p_extra->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + p_extradata->data_size  - sizeof(unsigned int), 4);
     p_extra->nVersion.nVersion = OMX_SPEC_VERSION;
     p_extra->nPortIndex = OMX_DirOutput;
     p_extra->eType = (OMX_EXTRADATATYPE) OMX_ExtraDataVideoLTRInfo;
@@ -1500,10 +1501,7 @@ int venc_dev::venc_input_log_buffers(OMX_BUFFERHEADERTYPE *pbuffer, int fd, int 
                 fwrite(ptemp, m_sVenc_cfg.input_width * 4, 1, m_debug.infile);
                 ptemp += stride;
             }
-        } else if (color_format == COLOR_FMT_NV12_UBWC || color_format == COLOR_FMT_RGBA8888_UBWC) {
-            if (color_format == COLOR_FMT_NV12_UBWC) {
-                msize -= 2 * extra_size;
-            }
+        } else if (color_format == COLOR_FMT_NV12_UBWC || color_format == COLOR_FMT_NV12_BPP10_UBWC || color_format == COLOR_FMT_RGBA8888_UBWC) {
             fwrite(ptemp, msize, 1, m_debug.infile);
         } else if(color_format == COLOR_FMT_P010) {
             stride = VENUS_Y_STRIDE(color_format, m_sVenc_cfg.input_width);
@@ -2070,7 +2068,7 @@ bool venc_dev::venc_get_buf_req(OMX_U32 *min_buff_count,
             return false;
         }
 
-        output_extradata_info.buffer_size = extra_data_size;
+        output_extradata_info.buffer_size = ALIGN(extra_data_size, SZ_4K);
         output_extradata_info.count = m_sOutput_buff_property.actualcount;
         output_extradata_info.size = output_extradata_info.buffer_size * output_extradata_info.count;
         venc_handle->m_client_out_extradata_info.set_extradata_info(extra_data_size,m_sOutput_buff_property.actualcount);
@@ -2706,55 +2704,6 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 }
                 break;
             }
-        case OMX_QcomIndexParamVideoHybridHierpMode:
-            {
-                QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE* pParam =
-                        (QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE*)paramData;
-                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE temporalParams;
-                OMX_U32 i = 0, cumulativeBitrate = 0, cumulativeRatio = 0;
-                OMX_QCOM_VIDEO_PARAM_IPB_QPRANGETYPE qp_range;
-
-                memset(&temporalParams, 0, sizeof(temporalParams));
-                temporalParams.nPLayerCountActual   = pParam->nHpLayers;
-                temporalParams.ePattern             = OMX_VIDEO_AndroidTemporalLayeringPatternAndroid;
-                temporalParams.nBLayerCountActual   = 0;
-                temporalParams.nLayerCountMax       = pParam->nHpLayers;
-                temporalParams.nBLayerCountMax      = 0;
-
-                if (!venc_convert_abs2cum_bitrate(pParam, temporalParams)) {
-                    DEBUG_PRINT_ERROR("Failed to convert Hybrid param to internal struct");
-                    return false;
-                }
-
-                if (!venc_validate_temporal_extn(temporalParams)) {
-                    DEBUG_PRINT_ERROR("Invalid settings for Hybrid HP");
-                    return false;
-                }
-
-                venc_copy_temporal_settings(temporalParams);
-
-                if (!venc_set_intra_period(pParam->nKeyFrameInterval, 0)) {
-                   DEBUG_PRINT_ERROR("Failed to set Intraperiod: %d", pParam->nKeyFrameInterval);
-                   return false;
-                }
-
-                temporal_layers_config.nKeyFrameInterval = intra_period.num_pframes;
-
-                qp_range.minIQP = pParam->nMinQuantizer;
-                qp_range.maxIQP = pParam->nMaxQuantizer;
-                qp_range.minPQP = pParam->nMinQuantizer;
-                qp_range.maxPQP = pParam->nMaxQuantizer;
-                qp_range.minBQP = pParam->nMinQuantizer;
-                qp_range.maxBQP = pParam->nMaxQuantizer;
-                if(!venc_set_session_qp_range (&qp_range)) {
-                    DEBUG_PRINT_ERROR("ERROR: Setting QP Range for hybridHP [%u %u] failed",
-                        (unsigned int)pParam->nMinQuantizer, (unsigned int)pParam->nMaxQuantizer);
-                    return false;
-                }
-                temporal_layers_config.nMinQuantizer = pParam->nMinQuantizer;
-                temporal_layers_config.nMaxQuantizer = pParam->nMaxQuantizer;
-                break;
-            }
         case OMX_QcomIndexParamBatchSize:
             {
                 OMX_PARAM_U32TYPE* pParam =
@@ -2948,8 +2897,8 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                         DEBUG_PRINT_ERROR("ERROR: Setting idr period failed");
                         return false;
                     }
+                    client_req_disable_bframe = (intraperiod->nBFrames == 0) ? true : false;
                 }
-                client_req_disable_bframe = (intraperiod->nBFrames == 0) ? true : false;
 
                 break;
             }
@@ -3305,6 +3254,14 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
             }
             break;
         }
+        case OMX_IndexConfigVideoNalSize:
+        {
+            if(!venc_set_nal_size((OMX_VIDEO_CONFIG_NALSIZE *)configData)) {
+                DEBUG_PRINT_LOW("Failed to set Nal size info");
+                return false;
+            }
+            break;
+        }
         default:
             DEBUG_PRINT_ERROR("Unsupported config index = %u", index);
             break;
@@ -3490,6 +3447,7 @@ bool venc_dev::venc_set_vqzip_defaults()
             m_sVenc_cfg.input_width, m_sVenc_cfg.input_height);
         return false;
     }
+
     control.id = V4L2_CID_MPEG_VIDEO_BITRATE_MODE;
     control.value = V4L2_MPEG_VIDEO_BITRATE_MODE_RC_OFF;
     rc = ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control);
@@ -4135,6 +4093,27 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                                 DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = TP10UBWC");
                             } else {
                                 DEBUG_PRINT_ERROR("ENC_CONFIG: TP10UBWC colorformat not supported for this codec and profile");
+                                return false;
+                            }
+
+                            if(colorData.masteringDisplayInfo.colorVolumeSEIEnabled ||
+                               colorData.contentLightLevel.lightLevelSEIEnabled) {
+                                if (!venc_set_hdr_info(colorData.masteringDisplayInfo, colorData.contentLightLevel)) {
+                                    DEBUG_PRINT_ERROR("HDR10-PQ Info Setting failed");
+                                    return false;
+                                } else {
+                                    DEBUG_PRINT_INFO("Encoding in HDR10-PQ mode");
+                                }
+                            } else {
+                                DEBUG_PRINT_INFO("Encoding in HLG mode");
+                            }
+                        } else if (handle->format == HAL_PIXEL_FORMAT_YCbCr_420_P010_VENUS) {
+                            if ((m_codec == OMX_VIDEO_CodingHEVC) &&
+                                 (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10)) {
+                                m_sVenc_cfg.inputformat = V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS;
+                                DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = P010 Venus");
+                            } else {
+                                DEBUG_PRINT_ERROR("ENC_CONFIG: P010 Venus colorformat not supported for this codec and profile");
                                 return false;
                             }
 
@@ -5146,10 +5125,8 @@ bool venc_dev::venc_reconfigure_intra_period()
         isValidLayerCount = true;
     }
 
-    if ((rate_ctrl.rcmode == V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) ||
-        (rate_ctrl.rcmode == V4L2_MPEG_VIDEO_BITRATE_MODE_MBR) ||
-        (rate_ctrl.rcmode == V4L2_MPEG_VIDEO_BITRATE_MODE_MBR_VFR)) {
-            isValidRcMode = true;
+    if (rate_ctrl.rcmode == V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) {
+        isValidRcMode = true;
     }
 
     isValidLtrSetting = ltrinfo.enabled ? false : true;
@@ -5161,13 +5138,15 @@ bool venc_dev::venc_reconfigure_intra_period()
                     isValidLtrSetting   &&
                     isValidRcMode       &&
                     isValidCodec        &&
+                    !low_latency_mode   &&
                     !client_req_disable_bframe;
 
     DEBUG_PRINT_LOW("B-frame enablement = %u; Conditions for Resolution = %u, FPS = %u,"
                      " Operating rate = %u, Layer condition = %u,"
-                     " LTR = %u, RC = %u Codec/Profile = %u Client request to disable = %u\n",
+                     " LTR = %u, RC = %u Codec/Profile = %u Client request to disable = %u LowLatency : %u\n",
                      enableBframes, isValidResolution, isValidFps, isValidOpRate,
-                     isValidLayerCount, isValidLtrSetting, isValidRcMode, isValidCodec, client_req_disable_bframe);
+                     isValidLayerCount, isValidLtrSetting, isValidRcMode, isValidCodec, client_req_disable_bframe,
+                     low_latency_mode);
 
     if (enableBframes && intra_period.num_bframes == 0 && intra_period.num_pframes > VENC_BFRAME_MAX_COUNT) {
         intra_period.num_bframes = VENC_BFRAME_MAX_COUNT;
@@ -5839,6 +5818,14 @@ bool venc_dev::venc_calibrate_gop()
             /*
             * No special handling needed for single layer
             */
+       DEBUG_PRINT_LOW("Clip num of P and B frames, nPframes: %d nBframes: %d",
+                       nPframes,nBframes);
+       if ((unsigned int)nPframes > VENC_INFINITE_GOP) {
+          nPframes =  VENC_INFINITE_GOP;
+       }
+       if ((unsigned int)nBframes > VENC_INFINITE_GOP) {
+          nBframes =  VENC_INFINITE_GOP;
+       }
     }
 
     DEBUG_PRINT_LOW("P/B Frames changed from: %ld/%ld to %d/%d",
@@ -6257,6 +6244,7 @@ bool venc_dev::venc_set_lowlatency_mode(OMX_BOOL enable)
         DEBUG_PRINT_ERROR("Failed to set lowlatency control");
         return false;
     }
+    low_latency_mode = enable;
     DEBUG_PRINT_LOW("Success IOCTL set control for id=%x, value=%d", control.id, control.value);
 
     return true;
@@ -6697,7 +6685,6 @@ OMX_ERRORTYPE venc_dev::venc_set_hhp(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYP
     }
     return OMX_ErrorNone;
 }
-
 OMX_ERRORTYPE venc_dev::venc_disable_hhp() {
 
     if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264) {
@@ -6797,41 +6784,6 @@ OMX_ERRORTYPE venc_dev::venc_set_bitrate_ratio(OMX_VIDEO_PARAM_ANDROID_TEMPORALL
     }
 
     return OMX_ErrorNone;
-}
-
-bool venc_dev::venc_convert_abs2cum_bitrate(QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE *pHybrid,
-                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporal_settings) {
-
-    OMX_U32 cumulativeBitrate   = 0;
-    OMX_U32 cumulativeRatio     = 0;
-    OMX_U32 i = 0;
-
-    if (pHybrid == NULL) {
-        DEBUG_PRINT_ERROR("TemporalLayer: Invalid arg %s", __func__);
-        return false;
-    }
-
-    DEBUG_PRINT_LOW("TemporalLayer: Converting layered bitrate to cumulative bitrate in percentage");
-
-    for (i = 0; i < temporal_settings.nPLayerCountActual; i++) {
-        cumulativeBitrate += pHybrid->nTemporalLayerBitrateRatio[i];
-    }
-
-    if (cumulativeBitrate == 0) {
-        temporal_settings.bBitrateRatiosSpecified = OMX_FALSE;
-        return true;
-    }
-
-    DEBUG_PRINT_LOW("TemporalLayer: Cumulative bitrate is: %u", cumulativeBitrate);
-    for (i = 0; i < temporal_settings.nPLayerCountActual; i++) {
-        temporal_settings.nBitrateRatios[i] = ((pHybrid->nTemporalLayerBitrateRatio[i] * 100)/cumulativeBitrate) + cumulativeRatio;
-        cumulativeRatio = temporal_settings.nBitrateRatios[i];
-        DEBUG_PRINT_LOW("TemporalLayer: Layer %u bitrate %u percent %u", i,
-            pHybrid->nTemporalLayerBitrateRatio[i], temporal_settings.nBitrateRatios[i]);
-    }
-    temporal_settings.bBitrateRatiosSpecified = OMX_TRUE;
-
-    return true;
 }
 
 bool venc_dev::venc_validate_temporal_settings() {
@@ -7017,6 +6969,7 @@ bool venc_dev::venc_get_hevc_profile(OMX_U32* profile)
         } else return false;
     } else return false;
 }
+
 bool venc_dev::venc_get_profile_level(OMX_U32 *eProfile,OMX_U32 *eLevel)
 {
     bool status = true;
@@ -7241,13 +7194,50 @@ bool venc_dev::venc_get_profile_level(OMX_U32 *eProfile,OMX_U32 *eLevel)
                 *eLevel = OMX_VIDEO_HEVCMainTierLevel62;
                 break;
             default:
-                *eLevel = OMX_VIDEO_HEVCLevelMax;
+                *eLevel = OMX_VIDEO_HEVCHighTiermax;
                 status = false;
                 break;
         }
     }
 
     return status;
+}
+
+bool venc_dev::venc_set_nal_size (OMX_VIDEO_CONFIG_NALSIZE *nalSizeInfo) {
+    struct v4l2_control gControl;
+    struct v4l2_control sControl;
+
+    DEBUG_PRINT_HIGH("set video stream format - nal size - %u", nalSizeInfo->nNaluBytes);
+    gControl.id = V4L2_CID_MPEG_VIDC_VIDEO_STREAM_FORMAT;
+
+    if (ioctl(m_nDriver_fd, VIDIOC_G_CTRL, &gControl)) {
+        DEBUG_PRINT_ERROR("get control: video stream format failed");
+        return false;
+    }
+
+    sControl.id = V4L2_CID_MPEG_VIDC_VIDEO_STREAM_FORMAT;
+    switch (nalSizeInfo->nNaluBytes) {
+            case 0:
+                sControl.value = V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_STARTCODES;
+                break;
+            case 4:
+                sControl.value = V4L2_MPEG_VIDC_VIDEO_NAL_FORMAT_FOUR_BYTE_LENGTH;
+                break;
+            default:
+                return false;
+        }
+
+    if ((1 << sControl.value) & gControl.value) {
+        if (ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &sControl)) {
+            DEBUG_PRINT_ERROR("set control: video stream format failed - %u",
+                    (unsigned int)nalSizeInfo->nNaluBytes);
+            return false;
+        }
+        return true;
+    }
+
+    return false;
+
 }
 
 #ifdef _ANDROID_ICS_

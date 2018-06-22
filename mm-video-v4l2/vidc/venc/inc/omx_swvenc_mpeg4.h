@@ -123,8 +123,6 @@ class omx_venc: public omx_video
         sp<GraphicBuffer> dstBuffer;
         SWVENC_IPBUFFER *m_pIpbuffers;
 
-        OMX_VIDEO_PARAM_MPEG4TYPE m_sParamMPEG4;
-        OMX_VIDEO_PARAM_H263TYPE m_sParamH263;
         enum color_format
         {
             COLOR_FMT_NV12,
@@ -201,6 +199,7 @@ class omx_venc: public omx_video
         int swvenc_input_log_buffers(const char *buffer, int bufferlen);
         bool dev_get_hevc_profile(OMX_U32*) { return false; }
         bool dev_handle_client_input_extradata(void*) { return false; }
+        void dev_get_color_format_as_string(char *, int, unsigned) {};
         static inline unsigned int SWVENC_Y_STRIDE(int color_fmt, int width)
         {
             unsigned int alignment, stride = 0;

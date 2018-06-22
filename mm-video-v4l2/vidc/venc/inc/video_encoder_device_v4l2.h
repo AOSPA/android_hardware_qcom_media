@@ -347,8 +347,6 @@ class venc_dev
         OMX_ERRORTYPE venc_set_hp(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
         OMX_ERRORTYPE venc_set_hhp(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
         OMX_ERRORTYPE venc_set_bitrate_ratio(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
-        bool venc_convert_abs2cum_bitrate(QOMX_EXTNINDEX_VIDEO_HYBRID_HP_MODE *,
-                                OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
         bool venc_validate_temporal_settings();
         bool venc_validate_temporal_extn(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
         OMX_ERRORTYPE venc_set_temporal_settings(OMX_VIDEO_PARAM_ANDROID_TEMPORALLAYERINGTYPE &temporalSettings);
@@ -529,6 +527,7 @@ class venc_dev
         bool venc_set_iframesize_type(QOMX_VIDEO_IFRAMESIZE_TYPE type);
         unsigned long venc_get_color_format(OMX_COLOR_FORMATTYPE eColorFormat);
         unsigned long venc_get_codectype(OMX_VIDEO_CODINGTYPE eCompressionFormat);
+        bool venc_set_nal_size (OMX_VIDEO_CONFIG_NALSIZE *nalSizeInfo);
 
         OMX_U32 pmem_free();
         OMX_U32 pmem_allocate(OMX_U32 size, OMX_U32 alignment, OMX_U32 count);
@@ -557,6 +556,7 @@ class venc_dev
         bool enable_mv_narrow_searchrange;
         int supported_rc_modes;
         bool camera_mode_enabled;
+        bool low_latency_mode;
         struct roidata {
             bool dirty;
             OMX_TICKS timestamp;

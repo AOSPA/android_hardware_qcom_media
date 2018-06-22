@@ -3594,6 +3594,7 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_ip(
     OMX_U32                size)
 {
     OMX_ERRORTYPE retval = OMX_ErrorNone;
+    SWVDEC_STATUS retval_swvdec = SWVDEC_STATUS_SUCCESS;
 
     unsigned int ii;
 
@@ -3678,8 +3679,23 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_ip(
         m_buffer_array_ip[ii].buffer_swvdec.size          = size;
         m_buffer_array_ip[ii].buffer_swvdec.p_client_data =
             (void *) ((unsigned long) ii);
+        m_buffer_array_ip[ii].buffer_swvdec.fd = pmem_fd;
 
         m_buffer_array_ip[ii].buffer_populated = true;
+
+        if(m_swvdec_codec == SWVDEC_CODEC_VC1)
+        {
+            OMX_SWVDEC_LOG_LOW("map ip buffer");
+
+            if((retval_swvdec = swvdec_register_buffer(m_swvdec_handle,
+                                                       &m_buffer_array_ip[ii].buffer_swvdec))
+               != SWVDEC_STATUS_SUCCESS)
+            {
+                OMX_SWVDEC_LOG_ERROR("swvdec_map failed for ip buffer %d: %p",ii,bufferaddr);
+                retval = retval_swvdec2omx(retval_swvdec);;
+                goto buffer_allocate_ip_exit;
+            }
+        }
 
         OMX_SWVDEC_LOG_HIGH("ip buffer %d: %p, fd = %d %d bytes",
                             ii,
@@ -3727,7 +3743,7 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op(
     OMX_U32                size)
 {
     OMX_ERRORTYPE retval = OMX_ErrorNone;
-    SWVDEC_STATUS retval_swvdec;
+    SWVDEC_STATUS retval_swvdec = SWVDEC_STATUS_SUCCESS;
     unsigned int ii;
 
     if (size != m_port_op.def.nBufferSize)
@@ -4172,6 +4188,7 @@ OMX_ERRORTYPE omx_swvdec::buffer_deallocate_ip(
     OMX_BUFFERHEADERTYPE *p_buffer_hdr)
 {
     OMX_ERRORTYPE retval = OMX_ErrorNone;
+    SWVDEC_STATUS retval_swvdec = SWVDEC_STATUS_SUCCESS;
 
     unsigned int ii;
 
@@ -4205,6 +4222,22 @@ OMX_ERRORTYPE omx_swvdec::buffer_deallocate_ip(
     {
         if (m_buffer_array_ip[ii].buffer_payload.pmem_fd > 0)
         {
+
+           if(m_swvdec_codec == SWVDEC_CODEC_VC1)
+            {
+                SWVDEC_BUFFER *p_buffer_swvdec;
+                p_buffer_swvdec  = &m_buffer_array_ip[ii].buffer_swvdec;
+                OMX_SWVDEC_LOG_LOW("unmap ip buffer");
+
+                if((retval_swvdec = swvdec_unregister_buffer(m_swvdec_handle,p_buffer_swvdec))
+                   != SWVDEC_STATUS_SUCCESS)
+                {
+                    OMX_SWVDEC_LOG_ERROR("swvdec_unmap failed for ip buffer %d: %p",
+                                         ii,p_buffer_swvdec->p_buffer);
+                    retval = retval_swvdec2omx(retval_swvdec);;
+                }
+            }
+
             m_buffer_array_ip[ii].buffer_populated = false;
 
             m_port_ip.populated = OMX_FALSE;
@@ -4262,7 +4295,7 @@ OMX_ERRORTYPE omx_swvdec::buffer_deallocate_op(
     OMX_BUFFERHEADERTYPE *p_buffer_hdr)
 {
     OMX_ERRORTYPE retval = OMX_ErrorNone;
-    SWVDEC_STATUS retval_swvdec;
+    SWVDEC_STATUS retval_swvdec = SWVDEC_STATUS_SUCCESS;
     unsigned int ii;
 
     if (p_buffer_hdr == NULL)
@@ -4304,13 +4337,12 @@ OMX_ERRORTYPE omx_swvdec::buffer_deallocate_op(
             {
                 SWVDEC_BUFFER *p_buffer_swvdec;
                 p_buffer_swvdec  = &m_buffer_array_op[ii].buffer_swvdec;
-                OMX_SWVDEC_LOG_LOW("map op buffer");
+                OMX_SWVDEC_LOG_LOW("unmap op buffer");
 
                 if((retval_swvdec = swvdec_unmap(m_swvdec_handle,p_buffer_swvdec)) != SWVDEC_STATUS_SUCCESS)
                 {
                     OMX_SWVDEC_LOG_ERROR("swvdec_unmap failed for op buffer %d: %p",ii,p_buffer_swvdec->p_buffer);
                     retval = retval_swvdec2omx(retval_swvdec);;
-                    goto buffer_deallocate_op_exit;
                 }
             }
             ion_unmap(m_buffer_array_op[ii].buffer_payload.pmem_fd ,
@@ -4325,13 +4357,12 @@ OMX_ERRORTYPE omx_swvdec::buffer_deallocate_op(
             {
                 SWVDEC_BUFFER *p_buffer_swvdec;
                 p_buffer_swvdec  = &m_buffer_array_op[ii].buffer_swvdec;
-                OMX_SWVDEC_LOG_LOW("map op buffer");
+                OMX_SWVDEC_LOG_LOW("unmap op buffer");
 
                 if((retval_swvdec = swvdec_unmap(m_swvdec_handle,p_buffer_swvdec)) != SWVDEC_STATUS_SUCCESS)
                 {
                     OMX_SWVDEC_LOG_ERROR("swvdec_unmap failed for op buffer %d: %p",ii,p_buffer_swvdec->p_buffer);
                     retval = retval_swvdec2omx(retval_swvdec);;
-                    goto buffer_deallocate_op_exit;
                 }
             }
             ion_unmap(m_buffer_array_op[ii].buffer_payload.pmem_fd,
@@ -4700,7 +4731,6 @@ OMX_ERRORTYPE omx_swvdec::flush(unsigned int port_index)
  */
 int omx_swvdec::ion_memory_alloc_map(vdec_ion *p_ion_info, OMX_U32 size, OMX_U32 alignment)
 {
-    p_ion_info->dev_fd = -EINVAL;
     int rc = -EINVAL;
 
     if((!p_ion_info) || (size == 0))
@@ -4708,6 +4738,8 @@ int omx_swvdec::ion_memory_alloc_map(vdec_ion *p_ion_info, OMX_U32 size, OMX_U32
         OMX_SWVDEC_LOG_ERROR("invalid arguments");
         goto ion_memory_alloc_map_exit;
     }
+
+    p_ion_info->dev_fd = -EINVAL;
 
     if ((p_ion_info->dev_fd = ion_open()) < 0)
     {
@@ -4744,7 +4776,7 @@ int omx_swvdec::ion_memory_alloc_map(vdec_ion *p_ion_info, OMX_U32 size, OMX_U32
                      (unsigned int)p_ion_info->alloc_data.heap_id_mask);
 
 ion_memory_alloc_map_exit:
-    return p_ion_info->dev_fd;
+    return (p_ion_info == nullptr) ? -EINVAL : p_ion_info->dev_fd;
 }
 
 /**
