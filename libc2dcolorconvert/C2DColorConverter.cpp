@@ -511,7 +511,6 @@ size_t C2DColorConverter::calcSize(ColorConvertFormat format, size_t width, size
             mAdrenoComputeAlignedWidthAndHeight(width, height, bpp, tile_mode, raster_mode, padding_threshold,
                                                 &alignedw, &alignedh);
             size = alignedw * alignedh * bpp;
-            size = ALIGN(size, ALIGN4K);
             break;
         case RGBA8888:
             bpp = 4;
@@ -521,7 +520,6 @@ size_t C2DColorConverter::calcSize(ColorConvertFormat format, size_t width, size
               size = mSrcStride *  alignedh * bpp;
             else
               size = alignedw * alignedh * bpp;
-            size = ALIGN(size, ALIGN4K);
             break;
         case YCbCr420SP:
             alignedw = ALIGN(width, ALIGN16);
