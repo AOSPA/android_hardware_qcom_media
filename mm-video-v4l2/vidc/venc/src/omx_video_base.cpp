@@ -4136,7 +4136,7 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
             }
             Input_pmem_info.offset = offset;
             Input_pmem_info.size = size;
-            DEBUG_PRINT_INFO("ETB (meta-Camera) fd = %d, offset = %d, size = %d",
+            DEBUG_PRINT_HIGH("ETB (meta-Camera) fd = %d, offset = %d, size = %d",
                     Input_pmem_info.fd, Input_pmem_info.offset,
                     Input_pmem_info.size);
         } else {
@@ -5140,7 +5140,8 @@ bool omx_video::is_conv_needed(private_handle_t *handle)
 
     if (!strncmp(m_platform, "msm8996", 7)) {
         bRet = handle->format == HAL_PIXEL_FORMAT_RGBA_8888 &&
-            !(handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED);
+            !(handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED ||
+              handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED_PI);
     } else {
         bRet = handle->format == HAL_PIXEL_FORMAT_RGBA_8888;
     }

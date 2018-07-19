@@ -428,7 +428,7 @@ void* venc_dev::async_venc_message_thread (void *input)
             if (stats.prev_tv.tv_sec && num_fbd && time_diff) {
                 float framerate = num_fbd * 1000000/(float)time_diff;
                 OMX_U32 bitrate = (stats.bytes_generated * 8 / num_fbd) * framerate;
-                DEBUG_PRINT_HIGH("stats: avg. fps %0.2f, bitrate %d",
+                DEBUG_PRINT_INFO("stats: avg. fps %0.2f, bitrate %d",
                     framerate, bitrate);
             }
             stats.prev_tv = tv;
@@ -1954,6 +1954,13 @@ bool venc_dev::venc_get_buf_req(OMX_U32 *min_buff_count,
             minCount = 11;
         }
 
+        /* Need more buffers for HFR usecase */
+        if (operating_rate >= 120 || (m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den) >= 120) {
+            minCount = MAX(minCount, 16);
+            DEBUG_PRINT_HIGH("fps %d, operating rate %d, input min count %d",
+                   (int)(m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den), operating_rate, minCount);
+        }
+
         // Request MAX_V4L2_BUFS from V4L2 in batch mode.
         // Keep the original count for the client
         if (metadatamode && mBatchSize) {
@@ -2050,6 +2057,14 @@ bool venc_dev::venc_get_buf_req(OMX_U32 *min_buff_count,
             minCount = MAX((unsigned int)control.value, mBatchSize) + mBatchSize;
             DEBUG_PRINT_LOW("set min count %d as mBatchSize %d", minCount, mBatchSize);
         }
+
+        /* Need more buffers for HFR usecase */
+        if (operating_rate >= 120 || (m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den) >= 120) {
+            minCount = MAX(minCount, 16);
+            DEBUG_PRINT_HIGH("fps %d, operating rate %d, output min count %d",
+                   (int)(m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den), operating_rate, minCount);
+        }
+
         m_sOutput_buff_property.mincount = minCount;
 
         if (m_sOutput_buff_property.actualcount < m_sOutput_buff_property.mincount)
@@ -3997,7 +4012,8 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12;
                         fmt.fmt.pix_mp.height = m_sVenc_cfg.input_height;
                         fmt.fmt.pix_mp.width = m_sVenc_cfg.input_width;
-                        if (usage & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED) {
+                        if (usage & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED ||
+                            usage & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED_PI) {
                             m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12_UBWC;
                         }
 
@@ -4067,7 +4083,9 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         memset(&fmt, 0, sizeof(fmt));
                         fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
 
-                        bool isUBWC = (handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED) && is_gralloc_source_ubwc;
+                        bool isUBWC = ((handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED ||
+                                        handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED_PI) &&
+                                       is_gralloc_source_ubwc);
                         if (handle->format == HAL_PIXEL_FORMAT_NV12_ENCODEABLE) {
                             m_sVenc_cfg.inputformat = isUBWC ? V4L2_PIX_FMT_NV12_UBWC : V4L2_PIX_FMT_NV12;
                             DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = NV12 %s", isUBWC ? "UBWC" : "Linear");
