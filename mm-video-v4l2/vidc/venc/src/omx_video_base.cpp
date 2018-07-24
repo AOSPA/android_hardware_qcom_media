@@ -2122,17 +2122,27 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
             }
         case OMX_IndexParamConsumerUsageBits:
             {
+               /*                            Consumer usage bits
+                *  --------------------------------------------------------------------
+                *  GRALLOC_USAGE_PRIVATE_    | GRALLOC_USAGE_PRIVATE_  |  Color       |
+                *  ALLOC_UBWC                | ALLOC_10BITS            |  Format      |
+                *   (bit 28)                 |  (bit30)                |              |
+                *  --------------------------------------------------------------------
+                *    0                       |     0                   |   NV12       |
+                *    0                       |     1                   |   P010       |
+                *    1                       |     0                   |   UBWC_NV12  |
+                *    1                       |     1                   |   BPP10_UBWC |
+                *  --------------------------------------------------------------------
+                */
+
                 if (paramData == NULL) { return OMX_ErrorBadParameter; }
+
                 OMX_U32 *consumerUsage = (OMX_U32 *)paramData;
-                OMX_U32 eProfile = 0;
-                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamConsumerUsageBits");
-                bool hevc = dev_get_hevc_profile(&eProfile);
-                if(hevc && eProfile == (OMX_U32)OMX_VIDEO_HEVCProfileMain10HDR10) {
-                    DEBUG_PRINT_INFO("Setting TP10 consumer usage bits");
-                    m_sParamConsumerUsage |= GRALLOC1_CONSUMER_USAGE_PRIVATE_10BIT_TP;
-                    m_sParamConsumerUsage |= GRALLOC1_CONSUMER_USAGE_UBWC_FLAG;
-                }
+                m_sParamConsumerUsage = 0;
+                dev_get_consumer_usage(&m_sParamConsumerUsage);
                 memcpy(consumerUsage, &m_sParamConsumerUsage, sizeof(m_sParamConsumerUsage));
+                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamConsumerUsageBits %x",
+                    m_sParamConsumerUsage);
                 break;
             }
         case OMX_IndexParamVideoSliceFMO:
@@ -2326,9 +2336,10 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                     // If the dataspace says RGB, recommend 601-limited;
                     // since that is the destination colorspace that C2D or Venus will convert to.
                     if (pParam->nPixelFormat == HAL_PIXEL_FORMAT_RGBA_8888) {
-                        DEBUG_PRINT_INFO("get_config (dataspace changed): ColorSpace: Recommend 601-limited for RGBA8888");
+                        DEBUG_PRINT_INFO("get_config (dataspace changed): ColorSpace: Recommend 601 for RGBA8888");
                         pParam->sAspects.mPrimaries = ColorAspects::PrimariesBT601_6_625;
-                        pParam->sAspects.mRange = ColorAspects::RangeLimited;
+                        // keep client-default setting for range
+                        // pParam->sAspects.mRange = ColorAspects::RangeLimited;
                         pParam->sAspects.mTransfer = ColorAspects::TransferSMPTE170M;
                         pParam->sAspects.mMatrixCoeffs = ColorAspects::MatrixBT601_6;
                     } else {
@@ -5225,7 +5236,7 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
     if (buffer->nFilledLen > 0 && handle && !is_streamon_done((OMX_U32) PORT_INDEX_OUT)) {
 
         ColorConvertFormat c2dSrcFmt = RGBA8888;
-        ColorConvertFormat c2dDestFmt = NV12_128m;
+        ColorConvertFormat c2dDestFmt = NV12_UBWC;
 
         ColorMapping::const_iterator found =
              mMapPixelFormat2Converter.find(handle->format);
@@ -5240,6 +5251,8 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
 
         mUsesColorConversion = is_conv_needed(handle);
         bool interlaced = is_ubwc_interlaced(handle);
+        int  full_range_flag = m_sConfigColorAspects.sAspects.mRange == ColorAspects::RangeFull ?
+                               private_handle_t::PRIV_FLAGS_ITU_R_601_FR : 0;
 
         if (c2dcc.getConversionNeeded() &&
             c2dcc.isPropChanged(m_sInPortDef.format.video.nFrameWidth,
@@ -5260,7 +5273,7 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
                                      m_sInPortDef.format.video.nFrameWidth,
                                      m_sInPortDef.format.video.nFrameHeight,
                                      c2dSrcFmt, c2dDestFmt,
-                                     handle->flags, handle->width)) {
+                                     handle->flags | full_range_flag, handle->width)) {
                 m_pCallbacks.EmptyBufferDone(hComp,m_app_data,buffer);
                 DEBUG_PRINT_ERROR("SetResolution failed");
                 return OMX_ErrorBadParameter;

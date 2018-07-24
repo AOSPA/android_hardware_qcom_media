@@ -1350,16 +1350,44 @@ typedef struct OMX_QTI_VIDEO_PARAM_ENABLE_ROIINFO {
     OMX_BOOL        bEnableRoiInfo;
 } OMX_QTI_VIDEO_PARAM_ENABLE_ROIINFO;
 
+#define MAX_ROI_MBINFO_SIZE 36864 /* 4096*2304/256 */
+
+/**
+ * Specifies ROI deltaQP information for a frame. This information must be provided
+ * via SetConfig before ETB. If client sends it after the ETB, it will be ignored.
+ * STRUCT MEMBERS:
+ *  nSize              : Size of Structure in bytes
+ *  nVersion           : OpenMAX IL specification version information
+ *  nPortIndex         : Index of the port to which this structure applies
+ *  nTimeStamp         : TimeStamp of the ETB, to which the ROI data will be applied.
+ *  nRoiMBInfoCount    : Total deltaQP values provided by the Client.
+ *                       Total MB/LCU = (MB/LCU)_Width * (MB/LCU)_Height
+ *                       for H264:
+ *                           MB_Width  = (frame_width +15) >>4;
+ *                           MB_Height = (frame_height +15) >>4;
+ *                       for H265:
+ *                           LCU_Width  = (frame_width + 31) >>5;
+ *                           LCU_Height = (frame_height +31) >>5;
+ *  pRoiMBInfo[]       : Array containing the deltaQP(1 per MacroBlock) values of a frame.
+ */
 typedef struct OMX_QTI_VIDEO_CONFIG_ROIINFO {
     OMX_U32         nSize;
     OMX_VERSIONTYPE nVersion;
     OMX_U32         nPortIndex;
-    OMX_S32         nUpperQpOffset;
-    OMX_S32         nLowerQpOffset;
     OMX_BOOL        bUseRoiInfo;
-    OMX_S32         nRoiMBInfoSize;
-    OMX_PTR         pRoiMBInfo;
+    OMX_TICKS       nTimeStamp;
+    OMX_S32         nRoiMBInfoCount;
+    OMX_S8          pRoiMBInfo[MAX_ROI_MBINFO_SIZE];
 } OMX_QTI_VIDEO_CONFIG_ROIINFO;
+
+/**
+ * When enable below BLUR feature, a filter will be applied to the
+ * input YUV to achieve the similar effect as downscaling to the
+ * BLUR resolution specified in eTargetResol.
+ * Could use the 4 pre-defined resolutions, 240p, 480p, 720p, 1080p,
+ * or could specify custom resolution, use bit[31:16] for width,
+ * bit[15:0] for height.
+*/
 
 typedef enum OMX_QTI_VIDEO_BLUR_RESOLUTION {
     BLUR_RESOL_DISABLED = 0,
@@ -1367,13 +1395,14 @@ typedef enum OMX_QTI_VIDEO_BLUR_RESOLUTION {
     BLUR_RESOL_480      = 2,
     BLUR_RESOL_720      = 3,
     BLUR_RESOL_1080     = 4,
+    BLUR_RESOL_MAX      = 0xFFFFFFFF,
 } OMX_QTI_VIDEO_BLUR_RESOLUTION;
 
 typedef struct OMX_QTI_VIDEO_CONFIG_BLURINFO {
     OMX_U32         nSize;
     OMX_VERSIONTYPE nVersion;
     OMX_U32         nPortIndex;
-    OMX_QTI_VIDEO_BLUR_RESOLUTION eTargetResol;
+    OMX_QTI_VIDEO_BLUR_RESOLUTION eTargetResol;  /* if custom resolution, bit[31:16] for width, bit[15:0] for height*/
 } OMX_QTI_VIDEO_CONFIG_BLURINFO;
 
 typedef enum OMX_QCOM_EXTRADATATYPE

@@ -88,7 +88,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define VENC_BFRAME_MAX_WIDTH       1920
 #define VENC_BFRAME_MAX_HEIGHT      1088
 #define VENC_INFINITE_GOP 0xFFFFFFF
-
+#define GRALLOC_USAGE_PRIVATE_10BIT_VIDEO (UINT32_C(1) << 30)
 #undef LOG_TAG
 #define LOG_TAG "OMX-VENC: venc_dev"
 
@@ -179,7 +179,7 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     m_debug.extradata_log = atoi(property_value);
 
 #ifdef _UBWC_
-    property_get("debug.gralloc.gfx_ubwc_disable", property_value, "0");
+    property_get("vendor.gralloc.disable_ubwc", property_value, "0");
     if(!(strncmp(property_value, "1", PROPERTY_VALUE_MAX)) ||
         !(strncmp(property_value, "true", PROPERTY_VALUE_MAX))) {
         is_gralloc_source_ubwc = 0;
@@ -208,7 +208,6 @@ venc_dev::~venc_dev()
         for (iter = m_roilist.begin(); iter != m_roilist.end(); iter++) {
             DEBUG_PRINT_HIGH("roidata with timestamp (%lld) should have been removed already",
                 iter->timestamp);
-            free(iter->info.pRoiMBInfo);
         }
         m_roilist.clear();
         pthread_mutex_unlock(&m_roilock);
@@ -536,7 +535,6 @@ void venc_dev::get_roi_for_timestamp(struct roidata &roi, OMX_TICKS timestamp)
                  * roidata and free the previous roidata which is no longer used.
                  */
                 DEBUG_PRINT_LOW("freeing unused roidata with timestamp %lld us", roi.timestamp);
-                free(roi.info.pRoiMBInfo);
             }
             found = true;
             roi = *iter;
@@ -768,7 +766,7 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
     if (roi.dirty) {
         data->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) +
             sizeof(struct msm_vidc_roi_qp_payload) +
-            roi.info.nRoiMBInfoSize - sizeof(unsigned int) - sizeof(unsigned char), 4);
+            roi.info.nRoiMBInfoCount - sizeof(unsigned int) - sizeof(unsigned char), 4);
         if (data->nSize > input_extradata_info.buffer_size  - consumed_len) {
            DEBUG_PRINT_ERROR("Buffer size (%lu) is less than ROI extradata size (%u)",
                              (input_extradata_info.buffer_size - consumed_len) ,data->nSize);
@@ -779,15 +777,12 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
         data->nPortIndex = 0;
         data->eType = (OMX_EXTRADATATYPE)MSM_VIDC_EXTRADATA_ROI_QP;
         data->nDataSize = sizeof(struct msm_vidc_roi_qp_payload) - sizeof(unsigned int) +
-                ALIGN(roi.info.nRoiMBInfoSize, 4);
+                ALIGN(roi.info.nRoiMBInfoCount, 4);
         struct msm_vidc_roi_qp_payload *roiData =
                 (struct msm_vidc_roi_qp_payload *)(data->data);
-        roiData->upper_qp_offset = roi.info.nUpperQpOffset;
-        roiData->lower_qp_offset = roi.info.nLowerQpOffset;
-        roiData->b_roi_info = roi.info.bUseRoiInfo;
-        roiData->mbi_info_size = ALIGN(roi.info.nRoiMBInfoSize, 4);
-        DEBUG_PRINT_HIGH("Using ROI QP map: Enable = %d", roiData->b_roi_info);
-        memcpy(roiData->data, roi.info.pRoiMBInfo, roi.info.nRoiMBInfoSize);
+        roiData->mbi_info_size = ALIGN(roi.info.nRoiMBInfoCount, 4);
+        DEBUG_PRINT_HIGH("Using ROI QP map");
+        memcpy(roiData->data, roi.info.pRoiMBInfo, roi.info.nRoiMBInfoCount);
         data = (OMX_OTHER_EXTRADATATYPE *)((char *)data + data->nSize);
         consumed_len += data->nSize;
     }
@@ -795,7 +790,6 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
     if (m_roi_enabled) {
         if (roi.dirty) {
             DEBUG_PRINT_LOW("free roidata with timestamp %lld us", roi.timestamp);
-            free(roi.info.pRoiMBInfo);
             roi.dirty = false;
         }
     }
@@ -862,17 +856,9 @@ bool venc_dev::venc_handle_client_input_extradata(void *buffer)
                 DEBUG_PRINT_HIGH("ROI QP info received");
                 memset(&roi, 0, sizeof(struct roidata));
 
-                roi.info.nUpperQpOffset = roiInfo->nUpperQpOffset;
-                roi.info.nLowerQpOffset = roiInfo->nLowerQpOffset;
-                roi.info.bUseRoiInfo = roiInfo->bUseRoiInfo;
-                roi.info.nRoiMBInfoSize = roiInfo->nRoiMBInfoSize;
+                roi.info.nRoiMBInfoCount = roiInfo->nRoiMBInfoCount;
 
-                roi.info.pRoiMBInfo = malloc(roi.info.nRoiMBInfoSize);
-                if (!roi.info.pRoiMBInfo) {
-                    DEBUG_PRINT_ERROR("venc_set_roi_qp_info: malloc failed.");
-                    return false;
-                }
-                memcpy(roi.info.pRoiMBInfo, &roiInfo->pRoiMBInfo, roiInfo->nRoiMBInfoSize);
+                memcpy(roi.info.pRoiMBInfo, &roiInfo->pRoiMBInfo, roiInfo->nRoiMBInfoCount);
                 /*
                 * set the timestamp equal to previous etb timestamp + 1
                 * to know this roi data arrived after previous etb
@@ -6453,17 +6439,9 @@ bool venc_dev::venc_set_roi_qp_info(OMX_QTI_VIDEO_CONFIG_ROIINFO *roiInfo)
     DEBUG_PRINT_HIGH("ROI QP info received");
     memset(&roi, 0, sizeof(struct roidata));
 
-    roi.info.nUpperQpOffset = roiInfo->nUpperQpOffset;
-    roi.info.nLowerQpOffset = roiInfo->nLowerQpOffset;
-    roi.info.bUseRoiInfo = roiInfo->bUseRoiInfo;
-    roi.info.nRoiMBInfoSize = roiInfo->nRoiMBInfoSize;
+    roi.info.nRoiMBInfoCount = roiInfo->nRoiMBInfoCount;
 
-    roi.info.pRoiMBInfo = malloc(roi.info.nRoiMBInfoSize);
-    if (!roi.info.pRoiMBInfo) {
-        DEBUG_PRINT_ERROR("venc_set_roi_qp_info: malloc failed.");
-        return false;
-    }
-    memcpy(roi.info.pRoiMBInfo, roiInfo->pRoiMBInfo, roiInfo->nRoiMBInfoSize);
+    memcpy(roi.info.pRoiMBInfo, roiInfo->pRoiMBInfo, roiInfo->nRoiMBInfoCount);
     /*
      * set the timestamp equal to previous etb timestamp + 1
      * to know this roi data arrived after previous etb
@@ -6512,8 +6490,10 @@ bool venc_dev::venc_set_blur_resolution(OMX_QTI_VIDEO_CONFIG_BLURINFO *blurInfo)
             blur_height = 1080;
             break;
         default:
-            DEBUG_PRINT_ERROR("Blur resolution not recognized");
-            return false;
+            blur_width = blurInfo->eTargetResol >> 16;
+            blur_height = blurInfo->eTargetResol & 0xFFFF;
+            DEBUG_PRINT_LOW("Custom blur resolution %dx%d", blur_width, blur_height);
+            break;
     }
 
     ctrl[0].id = V4L2_CID_MPEG_VIDC_VIDEO_BLUR_WIDTH;
@@ -6986,6 +6966,26 @@ bool venc_dev::venc_get_hevc_profile(OMX_U32* profile)
             return true;
         } else return false;
     } else return false;
+}
+
+void venc_dev::venc_get_consumer_usage(OMX_U32* usage) {
+
+    OMX_U32 eProfile = 0;
+    bool hevc = venc_get_hevc_profile(&eProfile);
+
+    /* Initialize to zero & update as per required color format */
+    *usage = 0;
+
+    /* TODO: P010 & NV12 color format addition pending */
+
+    /* Configure UBWC as default */
+    *usage |= GRALLOC_USAGE_PRIVATE_ALLOC_UBWC;
+
+    if(hevc && eProfile == (OMX_U32)OMX_VIDEO_HEVCProfileMain10HDR10) {
+        DEBUG_PRINT_INFO("Setting TP10 consumer usage bits");
+        *usage |= GRALLOC_USAGE_PRIVATE_10BIT_VIDEO;
+    }
+
 }
 
 bool venc_dev::venc_get_profile_level(OMX_U32 *eProfile,OMX_U32 *eLevel)
