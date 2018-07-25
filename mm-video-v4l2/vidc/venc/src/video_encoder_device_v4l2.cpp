@@ -4375,7 +4375,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
     buf.timestamp.tv_sec = bufhdr->nTimeStamp / 1000000;
     buf.timestamp.tv_usec = (bufhdr->nTimeStamp % 1000000);
 
-    if (!handle_input_extradata(buf)) {
+    if (plane[0].bytesused && !handle_input_extradata(buf)) {
         DEBUG_PRINT_ERROR("%s Failed to handle input extradata", __func__);
         return false;
     }
