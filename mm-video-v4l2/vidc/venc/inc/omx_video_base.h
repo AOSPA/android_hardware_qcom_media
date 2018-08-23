@@ -663,8 +663,7 @@ class omx_video: public qc_omx_component
         bool alloc_map_ion_memory(int size, venc_ion *ion_info,
                                  int flag);
         void free_ion_memory(struct venc_ion *buf_ion_info);
-        void venc_start_buffer_access(int fd);
-        void venc_end_buffer_access(int fd);
+        void do_cache_operations(int fd);
 #endif
 
         //*************************************************************
@@ -754,6 +753,7 @@ class omx_video: public qc_omx_component
         QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE m_sParamLowLatency;
         OMX_U32 m_nOperatingRate;
         QOMX_ENABLETYPE m_sParamColorSpaceConversion;
+        OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE m_sParamAndroidImageGrid;
 
         // fill this buffer queue
         omx_cmd_queue m_ftb_q;

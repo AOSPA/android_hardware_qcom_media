@@ -207,7 +207,7 @@ venc_dev::~venc_dev()
         pthread_mutex_lock(&m_roilock);
         for (iter = m_roilist.begin(); iter != m_roilist.end(); iter++) {
             DEBUG_PRINT_HIGH("roidata with timestamp (%lld) should have been removed already",
-                iter->timestamp);
+                iter->info.nTimeStamp);
         }
         m_roilist.clear();
         pthread_mutex_unlock(&m_roilock);
@@ -520,35 +520,23 @@ void venc_dev::get_roi_for_timestamp(struct roidata &roi, OMX_TICKS timestamp)
     memset(&roi, 0, sizeof(struct roidata));
     roi.dirty = false;
 
-    /*
-     * look for the roi data which has timestamp nearest and
-     * lower than the etb timestamp, we should not take the
-     * roi data which has the timestamp greater than etb timestamp.
-     */
     pthread_mutex_lock(&m_roilock);
     iter = m_roilist.begin();
     while (iter != m_roilist.end()) {
-        if (iter->timestamp <= timestamp) {
-            if (found) {
-                /* we found roidata in previous iteration already and got another
-                 * roidata in this iteration, so we will use this iteration's
-                 * roidata and free the previous roidata which is no longer used.
-                 */
-                DEBUG_PRINT_LOW("freeing unused roidata with timestamp %lld us", roi.timestamp);
-            }
+        if (iter->info.nTimeStamp < timestamp) {
+            /* remove previous roi data */
+            iter = m_roilist.erase(iter);
+            /* iter++ is not required as erase would do it */
+            continue;
+        } else if (iter->info.nTimeStamp == timestamp){
             found = true;
             roi = *iter;
-            /* we got roidata so erase the elment in the roi list.
-             * after list erase iterator will point to next element
-             * so we don't need to increment iter after erase.
-             */
-            iter = m_roilist.erase(iter);
-        } else {
-            iter++;
+            break;
         }
+        iter++;
     }
     if (found) {
-        DEBUG_PRINT_LOW("found roidata with timestamp %lld us", roi.timestamp);
+        DEBUG_PRINT_LOW("found roidata with timestamp %lld us", roi.info.nTimeStamp);
     }
     pthread_mutex_unlock(&m_roilock);
 }
@@ -653,7 +641,7 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
 
     DEBUG_PRINT_HIGH("Processing Extradata for Buffer = %lld", nTimeStamp); // Useful for debugging
 #ifdef USE_ION
-    venc_handle->venc_start_buffer_access(input_extradata_info.ion.data_fd);
+    venc_handle->do_cache_operations(input_extradata_info.ion.data_fd);
 #endif
     if (m_sVenc_cfg.inputformat == V4L2_PIX_FMT_NV12 || m_sVenc_cfg.inputformat == V4L2_PIX_FMT_NV21) {
         size = VENUS_BUFFER_SIZE(COLOR_FMT_NV12, width, height);
@@ -764,32 +752,74 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
     }
 
     if (roi.dirty) {
-        data->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) +
-            sizeof(struct msm_vidc_roi_qp_payload) +
-            roi.info.nRoiMBInfoCount - sizeof(unsigned int) - sizeof(unsigned char), 4);
+        OMX_U32 mbAlign = 16;
+        if (m_codec == OMX_VIDEO_CodingHEVC) {
+            mbAlign = 32;
+        }
+        OMX_U32 mbRow = ALIGN(width, mbAlign) / mbAlign;
+        OMX_U32 mbRowAligned = ((mbRow + 7) >> 3) << 3;
+        OMX_U32 mbCol = ALIGN(height, mbAlign) / mbAlign;
+        OMX_U32 numBytes = mbRowAligned * mbCol * 2;
+        OMX_U32 numBytesAligned = ALIGN(numBytes, 4);
+
+        data->nDataSize = ALIGN(sizeof(struct msm_vidc_roi_deltaqp_payload),256)
+                            + numBytesAligned;
+        data->nSize = ALIGN(sizeof(OMX_OTHER_EXTRADATATYPE) + data->nDataSize, 4);
         if (data->nSize > input_extradata_info.buffer_size  - consumed_len) {
            DEBUG_PRINT_ERROR("Buffer size (%lu) is less than ROI extradata size (%u)",
                              (input_extradata_info.buffer_size - consumed_len) ,data->nSize);
            status = false;
            goto bailout;
         }
+
         data->nVersion.nVersion = OMX_SPEC_VERSION;
         data->nPortIndex = 0;
         data->eType = (OMX_EXTRADATATYPE)MSM_VIDC_EXTRADATA_ROI_QP;
-        data->nDataSize = sizeof(struct msm_vidc_roi_qp_payload) - sizeof(unsigned int) +
-                ALIGN(roi.info.nRoiMBInfoCount, 4);
-        struct msm_vidc_roi_qp_payload *roiData =
-                (struct msm_vidc_roi_qp_payload *)(data->data);
-        roiData->mbi_info_size = ALIGN(roi.info.nRoiMBInfoCount, 4);
-        DEBUG_PRINT_HIGH("Using ROI QP map");
-        memcpy(roiData->data, roi.info.pRoiMBInfo, roi.info.nRoiMBInfoCount);
+        struct msm_vidc_roi_deltaqp_payload *roiData =
+                (struct msm_vidc_roi_deltaqp_payload *)(data->data);
+        roiData->b_roi_info = true;
+        roiData->mbi_info_size = numBytesAligned;
+        /* Video hardware expects ROI QP data to be aligned to 256,
+         * And its offset should be available in roiData->data[0].
+         *  -----------------
+         *  | unsigned int b_roi_info;   |
+         *  | int mbi_info_size;         |
+         *  ----------------------------
+         *  | data[0] = n                | => Contains Offset value to 256 aligned address
+         *  | .                          |
+         *  | .                          |
+         *  | .                          |
+         *  | data+n  <ROI data start>   | => 256 aligned address
+         *  ----------------------------
+         */
+        roiData->data[0] = (unsigned int)(ALIGN(&roiData->data[1], 256) - (unsigned long)roiData->data);
+
+        OMX_U8* tempBuf = (OMX_U8*)roi.info.pRoiMBInfo;
+        OMX_U16* exDataBuf = (OMX_U16*)((OMX_U8*)roiData->data + roiData->data[0]);;
+        OMX_U16* pBuf;
+        OMX_U8 clientROI;
+
+        /* Convert input extradata format to HW compatible format
+         * Input        : 1byte per MB
+         * HW Format    : 2bytes per MB. (1 << 11) | ((clientROI & 0x3F)<< 4)
+         * MB Row must be aligned to 8
+         */
+        for (OMX_U32 j = 0;j < mbCol; j++)
+        {
+            pBuf = exDataBuf + j*mbRowAligned;
+            for (OMX_U32 i = 0;i < mbRow; i++)
+            {
+                clientROI = *tempBuf++;
+                *pBuf++ = (1 << 11) | ((clientROI & 0x3F)<< 4);
+            }
+        }
         data = (OMX_OTHER_EXTRADATATYPE *)((char *)data + data->nSize);
         consumed_len += data->nSize;
     }
 
     if (m_roi_enabled) {
         if (roi.dirty) {
-            DEBUG_PRINT_LOW("free roidata with timestamp %lld us", roi.timestamp);
+            DEBUG_PRINT_LOW("free roidata with timestamp %lld us", roi.info.nTimeStamp);
             roi.dirty = false;
         }
     }
@@ -823,7 +853,7 @@ bool venc_dev::handle_input_extradata(struct v4l2_buffer buf)
 
 bailout:
 #ifdef USE_ION
-    venc_handle->venc_end_buffer_access(input_extradata_info.ion.data_fd);
+    venc_handle->do_cache_operations(input_extradata_info.ion.data_fd);
 #endif
     return status;
 }
@@ -853,25 +883,16 @@ bool venc_dev::venc_handle_client_input_extradata(void *buffer)
                     return false;
                 }
 
-                DEBUG_PRINT_HIGH("ROI QP info received");
                 memset(&roi, 0, sizeof(struct roidata));
 
                 roi.info.nRoiMBInfoCount = roiInfo->nRoiMBInfoCount;
-
+                roi.info.nTimeStamp = roiInfo->nTimeStamp;
                 memcpy(roi.info.pRoiMBInfo, &roiInfo->pRoiMBInfo, roiInfo->nRoiMBInfoCount);
-                /*
-                * set the timestamp equal to previous etb timestamp + 1
-                * to know this roi data arrived after previous etb
-                */
-                if (venc_handle->m_etb_count)
-                    roi.timestamp = venc_handle->m_etb_timestamp + 1;
-                else
-                    roi.timestamp = 0;
 
                 roi.dirty = true;
 
                 pthread_mutex_lock(&m_roilock);
-                DEBUG_PRINT_LOW("list add roidata with timestamp %lld us.", roi.timestamp);
+                DEBUG_PRINT_LOW("list add roidata with timestamp %lld us.", roi.info.nTimeStamp);
                 m_roilist.push_back(roi);
                 pthread_mutex_unlock(&m_roilock);
                 break;
@@ -1068,8 +1089,9 @@ OMX_ERRORTYPE venc_dev::venc_get_supported_profile_level(OMX_VIDEO_PARAM_PROFILE
                             QOMX_VIDEO_AVCProfileMain,
                             QOMX_VIDEO_AVCProfileConstrainedHigh,
                             QOMX_VIDEO_AVCProfileHigh };
-    int hevc_profiles[2] = { OMX_VIDEO_HEVCProfileMain,
-                             OMX_VIDEO_HEVCProfileMain10HDR10 };
+    int hevc_profiles[3] = { OMX_VIDEO_HEVCProfileMain,
+                             OMX_VIDEO_HEVCProfileMain10HDR10,
+                             OMX_VIDEO_HEVCProfileMainStill };
 
     if (!profileLevelType)
         return OMX_ErrorBadParameter;
@@ -1342,7 +1364,7 @@ int venc_dev::venc_extradata_log_buffers(char *buffer_addr, bool input)
         fd = output_extradata_info.ion.data_fd;
 
 #ifdef USE_ION
-    venc_handle->venc_start_buffer_access(fd);
+    venc_handle->do_cache_operations(fd);
 #endif
     if (!m_debug.extradatafile && m_debug.extradata_log) {
         int size = 0;
@@ -1368,7 +1390,7 @@ int venc_dev::venc_extradata_log_buffers(char *buffer_addr, bool input)
                                m_debug.extradatafile_name, errno);
             m_debug.extradatafile_name[0] = '\0';
 #ifdef USE_ION
-            venc_handle->venc_end_buffer_access(fd);
+            venc_handle->do_cache_operations(fd);
 #endif
             return -1;
         }
@@ -1383,7 +1405,7 @@ int venc_dev::venc_extradata_log_buffers(char *buffer_addr, bool input)
         } while (p_extra->eType != OMX_ExtraDataNone);
     }
 #ifdef USE_ION
-    venc_handle->venc_end_buffer_access(fd);
+    venc_handle->do_cache_operations(fd);
 #endif
     return 0;
 }
@@ -1397,7 +1419,7 @@ int venc_dev::venc_input_log_buffers(OMX_BUFFERHEADERTYPE *pbuffer, int fd, int 
     }
 
 #ifdef USE_ION
-    venc_handle->venc_start_buffer_access(fd);
+    venc_handle->do_cache_operations(fd);
 #endif
     if (!m_debug.infile) {
         int size = snprintf(m_debug.infile_name, PROPERTY_VALUE_MAX, "%s/input_enc_%lu_%lu_%p.yuv",
@@ -1514,7 +1536,7 @@ int venc_dev::venc_input_log_buffers(OMX_BUFFERHEADERTYPE *pbuffer, int fd, int 
     }
 bailout:
 #ifdef USE_ION
-    venc_handle->venc_end_buffer_access(fd);
+    venc_handle->do_cache_operations(fd);
 #endif
     return status;
 }
@@ -1574,12 +1596,15 @@ bool venc_dev::venc_open(OMX_U32 codec)
         profile_level.level = V4L2_MPEG_VIDC_VIDEO_VP8_VERSION_0;
         minqp = 0;
         maxqp = 127;
-    } else if (codec == OMX_VIDEO_CodingHEVC) {
+    } else if (codec == OMX_VIDEO_CodingHEVC || codec == OMX_VIDEO_CodingImageHEIC) {
         m_sVenc_cfg.codectype = V4L2_PIX_FMT_HEVC;
         idrperiod.idrperiod = 1;
         minqp = 0;
         maxqp = 51;
-        codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
+        if (codec == OMX_VIDEO_CodingImageHEIC)
+            codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC;
+        else
+            codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
         profile_level.level = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_1;
     } else if (codec == QOMX_VIDEO_CodingTME) {
         m_sVenc_cfg.codectype = V4L2_PIX_FMT_TME;
@@ -2286,13 +2311,13 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoBitrate");
 
                 if (pParam->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
-                    if (!venc_set_target_bitrate(pParam->nTargetBitrate)) {
-                        DEBUG_PRINT_ERROR("ERROR: Target Bit Rate setting failed");
+                    if (!venc_set_ratectrl_cfg(pParam->eControlRate)) {
+                        DEBUG_PRINT_ERROR("ERROR: Rate Control setting failed");
                         return false;
                     }
 
-                    if (!venc_set_ratectrl_cfg(pParam->eControlRate)) {
-                        DEBUG_PRINT_ERROR("ERROR: Rate Control setting failed");
+                    if (!venc_set_target_bitrate(pParam->nTargetBitrate)) {
+                        DEBUG_PRINT_ERROR("ERROR: Target Bit Rate setting failed");
                         return false;
                     }
                 } else {
@@ -2417,6 +2442,21 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 if (!venc_set_level(pParam->eLevel)) {
                     DEBUG_PRINT_ERROR("ERROR: Unsuccessful in updating level %d",
                                       pParam->eLevel);
+                    return false;
+                }
+                break;
+            }
+        case (OMX_INDEXTYPE)OMX_IndexParamVideoAndroidImageGrid:
+            {
+                DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoAndroidImageGrid");
+
+                if (m_codec != OMX_VIDEO_CodingImageHEIC) {
+                    DEBUG_PRINT_ERROR("OMX_IndexParamVideoAndroidImageGrid is only set for HEIC (HW tiling)");
+                    return true;
+                }
+
+                if (!venc_set_grid_enable()) {
+                    DEBUG_PRINT_ERROR("ERROR: Failed to set tile dimension");
                     return false;
                 }
                 break;
@@ -3541,6 +3581,25 @@ unsigned venc_dev::venc_start(void)
         return 1;
     }
 
+    if (m_codec == OMX_VIDEO_CodingImageHEIC && mIsGridset) {
+        struct v4l2_format fmt;
+        memset(&fmt, 0, sizeof(fmt));
+        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        fmt.fmt.pix_mp.height = DEFAULT_TILE_DIMENSION;
+        fmt.fmt.pix_mp.width = DEFAULT_TILE_DIMENSION;
+        fmt.fmt.pix_mp.pixelformat = m_sVenc_cfg.codectype;
+        DEBUG_PRINT_INFO("set format type %d, wxh %dx%d, pixelformat %#x",
+            fmt.type, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
+            fmt.fmt.pix_mp.pixelformat);
+        if (ioctl(m_nDriver_fd, VIDIOC_S_FMT, &fmt)) {
+            DEBUG_PRINT_ERROR("set format failed, type %d, wxh %dx%d, pixelformat %#x",
+                fmt.type, fmt.fmt.pix_mp.width, fmt.fmt.pix_mp.height,
+                fmt.fmt.pix_mp.pixelformat);
+            hw_overload = errno == EBUSY;
+            return false;
+        }
+    }
+
     buf_type=V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     DEBUG_PRINT_LOW("send_command_proxy(): Idle-->Executing");
     ret=ioctl(m_nDriver_fd, VIDIOC_STREAMON,&buf_type);
@@ -3736,10 +3795,9 @@ bool venc_dev::allocate_extradata(unsigned port)
         int flag;
     }port_info[2] = {
         {
-            // Inout extradata is cached to improve ROI performance
             .num_planes = num_input_planes,
             .extradata_info = &input_extradata_info,
-            .flag = ION_FLAG_CACHED
+            .flag = 0
         },
         {
             .num_planes = num_output_planes,
@@ -3948,7 +4006,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                     DEBUG_PRINT_ERROR("venc_empty_buf: Zero length buffers are not valid");
                     return false;
                 }
-            } else if (!color_format) {
+            } else if (!color_format) { // Metadata mode
 
                 if (meta_buf->buffer_type == LEGACY_CAM_SOURCE) {
                     native_handle_t *hnd = (native_handle_t*)meta_buf->meta_handle;
@@ -4072,9 +4130,18 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         bool isUBWC = ((handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED ||
                                         handle->flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED_PI) &&
                                        is_gralloc_source_ubwc);
+
+                        char grallocFormatStr[200];
+                        get_gralloc_format_as_string(grallocFormatStr, sizeof(grallocFormatStr), handle->format);
+                        DEBUG_PRINT_LOW("gralloc format 0x%x (%s) (%s)",
+                            handle->format, grallocFormatStr, isUBWC ? "UBWC" : "Linear");
+
                         if (handle->format == HAL_PIXEL_FORMAT_NV12_ENCODEABLE) {
                             m_sVenc_cfg.inputformat = isUBWC ? V4L2_PIX_FMT_NV12_UBWC : V4L2_PIX_FMT_NV12;
                             DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = NV12 %s", isUBWC ? "UBWC" : "Linear");
+                        } else if (handle->format == HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS_UBWC) {
+                            m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12_UBWC;
+                            DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = NV12_UBWC");
                         } else if (handle->format == HAL_PIXEL_FORMAT_RGBA_8888) {
                             // In case of RGB, conversion to YUV is handled within encoder.
                             // Disregard the Colorspace in gralloc-handle in case of RGB and use
@@ -4090,34 +4157,17 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         } else if (handle->format == QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m) {
                             m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12;
                             DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = NV12 Linear");
-                        } else if (handle->format == HAL_PIXEL_FORMAT_YCbCr_420_TP10_UBWC) {
+                        } else if (handle->format == HAL_PIXEL_FORMAT_YCbCr_420_TP10_UBWC ||
+                                   handle->format == HAL_PIXEL_FORMAT_YCbCr_420_P010_VENUS) {
                             if ((m_codec == OMX_VIDEO_CodingHEVC) &&
                                  (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10)) {
-                                m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV12_TP10_UBWC;
-                                DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = TP10UBWC");
+                                m_sVenc_cfg.inputformat =
+                                    (handle->format == HAL_PIXEL_FORMAT_YCbCr_420_TP10_UBWC)?
+                                             V4L2_PIX_FMT_NV12_TP10_UBWC :
+                                             V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS;
+                                DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = 10bit");
                             } else {
-                                DEBUG_PRINT_ERROR("ENC_CONFIG: TP10UBWC colorformat not supported for this codec and profile");
-                                return false;
-                            }
-
-                            if(colorData.masteringDisplayInfo.colorVolumeSEIEnabled ||
-                               colorData.contentLightLevel.lightLevelSEIEnabled) {
-                                if (!venc_set_hdr_info(colorData.masteringDisplayInfo, colorData.contentLightLevel)) {
-                                    DEBUG_PRINT_ERROR("HDR10-PQ Info Setting failed");
-                                    return false;
-                                } else {
-                                    DEBUG_PRINT_INFO("Encoding in HDR10-PQ mode");
-                                }
-                            } else {
-                                DEBUG_PRINT_INFO("Encoding in HLG mode");
-                            }
-                        } else if (handle->format == HAL_PIXEL_FORMAT_YCbCr_420_P010_VENUS) {
-                            if ((m_codec == OMX_VIDEO_CodingHEVC) &&
-                                 (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10)) {
-                                m_sVenc_cfg.inputformat = V4L2_PIX_FMT_SDE_Y_CBCR_H2V2_P010_VENUS;
-                                DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = P010 Venus");
-                            } else {
-                                DEBUG_PRINT_ERROR("ENC_CONFIG: P010 Venus colorformat not supported for this codec and profile");
+                                DEBUG_PRINT_ERROR("ENC_CONFIG: 10bit colorformat not supported for this codec and profile");
                                 return false;
                             }
 
@@ -4135,6 +4185,9 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         } else if (handle->format == QOMX_COLOR_FormatYVU420SemiPlanar) {
                            m_sVenc_cfg.inputformat = V4L2_PIX_FMT_NV21;
                            DEBUG_PRINT_INFO("ENC_CONFIG: Input Color = NV21 Linear");
+                        } else {
+                            DEBUG_PRINT_ERROR("Color format is not recoganized. Format 0x%X", handle->format);
+                            return false;
                         }
 
                         DEBUG_PRINT_INFO("color_space.primaries %d colorData.colorPrimaries %d, is_csc_custom_matrix_enabled=%d",
@@ -4189,53 +4242,6 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                         }
                     }
 
-                    struct UBWCStats cam_ubwc_stats[2];
-                    unsigned long long int cr = 1 << 16;
-
-                    if (getMetaData(handle, GET_UBWC_CR_STATS_INFO, (void *)cam_ubwc_stats) == 0) {
-                        if (cam_ubwc_stats[0].bDataValid) {
-                            switch (cam_ubwc_stats[0].version) {
-                            case UBWC_2_0:
-                                {
-                                    unsigned long long int sum = 0, weighted_sum = 0;
-
-                                    DEBUG_PRINT_HIGH("Field 0 : 32 Tile = %d 64 Tile = %d 96 Tile = %d "
-                                       "128 Tile = %d 160 Tile = %d 192 Tile = %d 256 Tile = %d\n",
-                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile32,
-                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile64,
-                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile96,
-                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile128,
-                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile160,
-                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile192,
-                                       cam_ubwc_stats[0].ubwc_stats.nCRStatsTile256);
-
-                                    weighted_sum =
-                                        32  * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile32 +
-                                        64  * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile64 +
-                                        96  * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile96 +
-                                        128 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile128 +
-                                        160 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile160 +
-                                        192 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile192 +
-                                        256 * cam_ubwc_stats[0].ubwc_stats.nCRStatsTile256;
-
-                                    sum =
-                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile32 +
-                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile64 +
-                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile96 +
-                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile128 +
-                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile160 +
-                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile192 +
-                                        cam_ubwc_stats[0].ubwc_stats.nCRStatsTile256;
-
-                                    cr = (weighted_sum && sum) ?
-                                        ((256 * sum) << 16) / weighted_sum : cr;
-                                }
-                                break;
-                            default:
-                                break;
-                            }
-                        }
-                    }
 
                     uint32_t encodePerfMode = 0;
                     if (getMetaData(handle, GET_VIDEO_PERF_MODE, &encodePerfMode) == 0) {
@@ -4247,12 +4253,14 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                     plane[0].data_offset = 0;
                     plane[0].length = handle->size;
                     plane[0].bytesused = handle->size;
-                    plane[0].reserved[2] = (unsigned long int)cr;
+                    char v4l2ColorFormatStr[200];
+                    get_v4l2_color_format_as_string(v4l2ColorFormatStr, sizeof(v4l2ColorFormatStr), m_sVenc_cfg.inputformat);
                     DEBUG_PRINT_LOW("venc_empty_buf: Opaque camera buf: fd = %d "
-                                ": filled %d of %d format 0x%lx CR = %d", fd, plane[0].bytesused,
-                                plane[0].length, m_sVenc_cfg.inputformat, plane[0].reserved[2]);
+                                ": filled %d of %d format 0x%lx (%s)", fd, plane[0].bytesused,
+                                plane[0].length, m_sVenc_cfg.inputformat, v4l2ColorFormatStr);
                 }
             } else {
+                // Metadata mode
                 // color_format == 1 ==> RGBA to YUV Color-converted buffer
                 // Buffers color-converted via C2D have 601-Limited color
                 if (!streaming[OUTPUT_PORT]) {
@@ -4267,7 +4275,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                 DEBUG_PRINT_LOW("venc_empty_buf: Opaque non-camera buf: fd = %d filled %d of %d",
                         fd, plane[0].bytesused, plane[0].length);
             }
-        } else {
+        } else { // Not Metadata mode
             plane[0].m.userptr = (unsigned long) bufhdr->pBuffer;
             plane[0].data_offset = bufhdr->nOffset;
             plane[0].length = bufhdr->nAllocLen;
@@ -4279,7 +4287,6 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
 
     if (!streaming[OUTPUT_PORT] &&
         (m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_TP10_UBWC &&
-         m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_P010_UBWC &&
          m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_UBWC)) {
         if (bframe_implicitly_enabled) {
             DEBUG_PRINT_HIGH("Disabling implicitly enabled B-frames");
@@ -4374,7 +4381,9 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                 return false;
             }
 
-            if (inp_width * inp_height != out_width * out_height) {
+            // Tiling in HEIC requires output WxH to be Tile size; difference is permitted
+            if (!(m_codec == OMX_VIDEO_CodingImageHEIC) &&
+                inp_width * inp_height != out_width * out_height) {
                 DEBUG_PRINT_ERROR("Downscalar is disabled and input/output dimenstions don't match");
                 DEBUG_PRINT_ERROR("Input WxH : %dx%d Output WxH : %dx%d",inp_width, inp_height, out_width, out_height);
                 return false;
@@ -5108,7 +5117,9 @@ bool venc_dev::venc_reconfigure_intra_period()
 
     if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_HEVC &&
         ((codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN) ||
-         (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10))) {
+         (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10) ||
+         (codec_profile.profile == V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC)) &&
+         (m_codec != OMX_VIDEO_CodingImageHEIC)) {
         isValidCodec = true;
     }
 
@@ -5207,6 +5218,26 @@ bool venc_dev::venc_reconfigure_intra_period()
     return true;
 }
 
+bool venc_dev::venc_set_grid_enable()
+{
+    int rc;
+    struct v4l2_control control;
+
+    DEBUG_PRINT_LOW("venc_set_tile_dimension");
+    control.id = V4L2_CID_MPEG_VIDC_IMG_GRID_ENABLE;
+    control.value = 1;
+    rc = ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control);
+
+    if (rc) {
+        DEBUG_PRINT_ERROR("Failed to set control, id %#x, value %d", control.id, control.value);
+        return false;
+    }
+
+    DEBUG_PRINT_LOW("Success IOCTL set control for id=%d, value=%d", control.id, control.value);
+    mIsGridset = true;
+    return true;
+}
+
 bool venc_dev::venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
 {
     DEBUG_PRINT_LOW("venc_set_intra_period: nPFrames = %u, nBFrames: %u", (unsigned int)nPFrames, (unsigned int)nBFrames);
@@ -5225,7 +5256,8 @@ bool venc_dev::_venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
     char property_value[PROPERTY_VALUE_MAX] = {0};
 
     if (m_sVenc_cfg.codectype != V4L2_PIX_FMT_H264 &&
-        m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC) {
+        m_sVenc_cfg.codectype != V4L2_PIX_FMT_HEVC &&
+        m_codec == OMX_VIDEO_CodingImageHEIC) {
         nBFrames = 0;
     }
 
@@ -5233,6 +5265,7 @@ bool venc_dev::_venc_set_intra_period(OMX_U32 nPFrames, OMX_U32 nBFrames)
         (codec_profile.profile != V4L2_MPEG_VIDEO_H264_PROFILE_MAIN)             &&
         (codec_profile.profile != V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN)        &&
         (codec_profile.profile != V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10)      &&
+        (codec_profile.profile != V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC) &&
         (codec_profile.profile != V4L2_MPEG_VIDEO_H264_PROFILE_HIGH)) {
         nBFrames = 0;
     }
@@ -5549,7 +5582,10 @@ bool venc_dev::venc_set_target_bitrate(OMX_U32 nTargetBitrate)
         return true;
     }
 
-    control.id = V4L2_CID_MPEG_VIDEO_BITRATE;
+    if (rate_ctrl.rcmode == V4L2_MPEG_VIDEO_BITRATE_MODE_CQ)
+        control.id = V4L2_CID_MPEG_VIDC_VIDEO_FRAME_QUALITY;
+    else
+        control.id = V4L2_CID_MPEG_VIDEO_BITRATE;
     control.value = nTargetBitrate;
 
     DEBUG_PRINT_LOW("Calling IOCTL set control for id=%d, val=%d", control.id, control.value);
@@ -5561,6 +5597,8 @@ bool venc_dev::venc_set_target_bitrate(OMX_U32 nTargetBitrate)
 
     DEBUG_PRINT_LOW("Success IOCTL set control for id=%d, value=%d", control.id, control.value);
 
+    if (control.id == V4L2_CID_MPEG_VIDC_VIDEO_FRAME_QUALITY)
+        return true;
 
     m_sVenc_cfg.targetbitrate = control.value;
     bitrate.target_bitrate = control.value;
@@ -5632,6 +5670,7 @@ unsigned long venc_dev::venc_get_codectype(OMX_VIDEO_CODINGTYPE eCompressionForm
         codectype = V4L2_PIX_FMT_VP9;
         break;
     case OMX_VIDEO_CodingHEVC:
+    case OMX_VIDEO_CodingImageHEIC:
         codectype = V4L2_PIX_FMT_HEVC;
         break;
     case QOMX_VIDEO_CodingTME:
@@ -6159,6 +6198,11 @@ bool venc_dev::venc_set_ratectrl_cfg(OMX_VIDEO_CONTROLRATETYPE eControlRate)
                 control.value = V4L2_MPEG_VIDEO_BITRATE_MODE_MBR_VFR:
                 status = false;
             break;
+        case OMX_Video_ControlRateConstantQuality:
+            (supported_rc_modes & RC_CQ) ?
+                control.value = V4L2_MPEG_VIDEO_BITRATE_MODE_CQ:
+                status = false;
+            break;
         default:
             status = false;
             break;
@@ -6436,25 +6480,16 @@ bool venc_dev::venc_set_roi_qp_info(OMX_QTI_VIDEO_CONFIG_ROIINFO *roiInfo)
         return false;
     }
 
-    DEBUG_PRINT_HIGH("ROI QP info received");
     memset(&roi, 0, sizeof(struct roidata));
 
     roi.info.nRoiMBInfoCount = roiInfo->nRoiMBInfoCount;
-
+    roi.info.nTimeStamp = roiInfo->nTimeStamp;
     memcpy(roi.info.pRoiMBInfo, roiInfo->pRoiMBInfo, roiInfo->nRoiMBInfoCount);
-    /*
-     * set the timestamp equal to previous etb timestamp + 1
-     * to know this roi data arrived after previous etb
-     */
-    if (venc_handle->m_etb_count)
-        roi.timestamp = venc_handle->m_etb_timestamp + 1;
-    else
-        roi.timestamp = 0;
 
     roi.dirty = true;
 
     pthread_mutex_lock(&m_roilock);
-    DEBUG_PRINT_LOW("list add roidata with timestamp %lld us.", roi.timestamp);
+    DEBUG_PRINT_LOW("list add roidata with timestamp %lld us.", roi.info.nTimeStamp);
     m_roilist.push_back(roi);
     pthread_mutex_unlock(&m_roilock);
 
@@ -7125,6 +7160,9 @@ bool venc_dev::venc_get_profile_level(OMX_U32 *eProfile,OMX_U32 *eLevel)
                 break;
             case V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN10:
                 *eProfile = OMX_VIDEO_HEVCProfileMain10HDR10;
+                break;
+            case V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC:
+                *eProfile = OMX_VIDEO_HEVCProfileMainStill;
                 break;
             default:
                 *eProfile = OMX_VIDEO_HEVCProfileMax;
