@@ -47,6 +47,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <inttypes.h>
 #include <cstddef>
+#include <dlfcn.h>
 #include <cutils/atomic.h>
 #include <qdMetaData.h>
 #include <color_metadata.h>
@@ -111,6 +112,7 @@ extern "C" {
 #include "OMX_IndexExt.h"
 #include "qc_omx_component.h"
 #include "media/msm_vidc_utils.h"
+#include "frameparser.h"
 #include "extra_data_handler.h"
 #include "ts_parser.h"
 #include "vidc_debug.h"
@@ -272,26 +274,10 @@ enum port_indexes {
     OMX_CORE_OUTPUT_EXTRADATA_INDEX  =3
 };
 
-
-class perf_metrics
-{
-    public:
-        perf_metrics() :
-            start_time(0),
-            proc_time(0),
-            active(false) {
-            };
-        ~perf_metrics() {};
-        void start();
-        void stop();
-        void end(OMX_U32 units_cntr = 0);
-        void reset();
-        OMX_U64 processing_time_us();
-    private:
-        inline OMX_U64 get_act_time();
-        OMX_U64 start_time;
-        OMX_U64 proc_time;
-        bool active;
+enum arb_mode_codecs {
+        VDEC_ARB_CODEC_H264 = 0x1,
+        VDEC_ARB_CODEC_HEVC = 0x2,
+        VDEC_ARB_CODEC_MPEG2 = 0x4,
 };
 
 enum vdec_codec {
@@ -778,7 +764,7 @@ class omx_vdec: public qc_omx_component
             OMX_COMPONENT_GENERATE_EVENT_FLUSH       = 0x9,
             OMX_COMPONENT_GENERATE_EVENT_INPUT_FLUSH = 0x0A,
             OMX_COMPONENT_GENERATE_EVENT_OUTPUT_FLUSH = 0x0B,
-            OMX_COMPONENT_GENERATE_FBD = 0xc,
+            OMX_COMPONENT_GENERATE_FBD = 0xC,
             OMX_COMPONENT_GENERATE_START_DONE = 0xD,
             OMX_COMPONENT_GENERATE_PAUSE_DONE = 0xE,
             OMX_COMPONENT_GENERATE_RESUME_DONE = 0xF,
@@ -791,7 +777,9 @@ class omx_vdec: public qc_omx_component
             OMX_COMPONENT_GENERATE_INFO_FIELD_DROPPED = 0x16,
             OMX_COMPONENT_GENERATE_UNSUPPORTED_SETTING = 0x17,
             OMX_COMPONENT_GENERATE_HARDWARE_OVERLOAD = 0x18,
-            OMX_COMPONENT_CLOSE_MSG = 0x19
+            OMX_COMPONENT_GENERATE_ION_PREFETCH_PIXEL = 0x19,
+            OMX_COMPONENT_GENERATE_ION_PREFETCH_NON_PIXEL = 0x1A,
+            OMX_COMPONENT_CLOSE_MSG = 0x1B
         };
 
         enum vc1_profile_type {
@@ -862,6 +850,13 @@ class omx_vdec: public qc_omx_component
         void free_input_buffer_header();
         void free_output_extradata_buffer_header();
 
+        OMX_ERRORTYPE allocate_input_heap_buffer(OMX_HANDLETYPE       hComp,
+                OMX_BUFFERHEADERTYPE **bufferHdr,
+                OMX_U32              port,
+                OMX_PTR              appData,
+                OMX_U32              bytes);
+
+
         OMX_ERRORTYPE allocate_input_buffer(OMX_HANDLETYPE       hComp,
                 OMX_BUFFERHEADERTYPE **bufferHdr,
                 OMX_U32              port,
@@ -903,6 +898,15 @@ class omx_vdec: public qc_omx_component
         OMX_ERRORTYPE empty_this_buffer_proxy(OMX_HANDLETYPE       hComp,
                 OMX_BUFFERHEADERTYPE *buffer);
 
+        OMX_ERRORTYPE empty_this_buffer_proxy_arbitrary(OMX_HANDLETYPE hComp,
+                OMX_BUFFERHEADERTYPE *buffer
+                );
+
+        OMX_ERRORTYPE push_input_buffer (OMX_HANDLETYPE hComp);
+        OMX_ERRORTYPE push_input_sc_codec (OMX_HANDLETYPE hComp);
+        OMX_ERRORTYPE push_input_h264 (OMX_HANDLETYPE hComp);
+        OMX_ERRORTYPE push_input_hevc (OMX_HANDLETYPE hComp);
+
         OMX_ERRORTYPE fill_this_buffer_proxy(OMX_HANDLETYPE       hComp,
                 OMX_BUFFERHEADERTYPE *buffer);
         bool release_done();
@@ -915,6 +919,7 @@ class omx_vdec: public qc_omx_component
         OMX_ERRORTYPE start_port_reconfig();
         OMX_ERRORTYPE update_picture_resolution();
         int stream_off(OMX_U32 port);
+        void adjust_timestamp(OMX_S64 &act_timestamp);
         void set_frame_rate(OMX_S64 act_timestamp);
         bool handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr);
         void convert_color_space_info(OMX_U32 primaries, OMX_U32 range,
@@ -1124,23 +1129,34 @@ class omx_vdec: public qc_omx_component
         // SPS+PPS sent as part of set_config
         OMX_VENDOR_EXTRADATATYPE            m_vendor_config;
 
+        /*Variables for arbitrary Byte parsing support*/
+        frame_parse m_frame_parser;
+        h264_stream_parser *h264_parser;
+        HEVC_Utils m_hevc_utils;
+
         omx_cmd_queue m_input_pending_q;
         omx_cmd_queue m_input_free_q;
+        bool arbitrary_bytes;
+        OMX_BUFFERHEADERTYPE  h264_scratch;
         OMX_BUFFERHEADERTYPE  *psource_frame;
         OMX_BUFFERHEADERTYPE  *pdest_frame;
         OMX_BUFFERHEADERTYPE  *m_inp_heap_ptr;
         OMX_BUFFERHEADERTYPE  **m_phdr_pmem_ptr;
         unsigned int m_heap_inp_bm_count;
+        codec_type codec_type_parse;
         bool first_frame_meta;
         unsigned frame_count;
         unsigned nal_count;
         unsigned nal_length;
+        bool look_ahead_nal;
         int first_frame;
         unsigned char *first_buffer;
         int first_frame_size;
         unsigned char m_hwdevice_name[80];
         FILE *m_device_file_ptr;
         enum vc1_profile_type m_vc1_profile;
+        OMX_S64 h264_last_au_ts;
+        OMX_U32 h264_last_au_flags;
         OMX_U32 m_demux_offsets[8192];
         OMX_U32 m_demux_entries;
         OMX_U32 m_disp_hor_size;
@@ -1216,7 +1232,6 @@ class omx_vdec: public qc_omx_component
         bool async_thread_created;
 
         OMX_VIDEO_PARAM_PROFILELEVELTYPE m_profile_lvl;
-        OMX_U32 m_profile;
         QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE m_sParamLowLatency;
 
         //variables to handle dynamic buffer mode
@@ -1324,37 +1339,14 @@ class omx_vdec: public qc_omx_component
         void send_codec_config();
         OMX_TICKS m_last_rendered_TS;
         int32_t m_dec_hfr_fps;
+        int32_t m_arb_mode_override;
         volatile int32_t m_queued_codec_config_count;
         OMX_U32 current_perf_level;
         bool secure_scaling_to_non_secure_opb;
         bool m_force_compressed_for_dpb;
         bool m_is_display_session;
 
-        class perf_lock {
-            private:
-                pthread_mutex_t mlock;
-
-            public:
-                perf_lock() {
-                    pthread_mutex_init(&mlock, NULL);
-                }
-
-                ~perf_lock() {
-                    pthread_mutex_destroy(&mlock);
-                }
-
-                void lock() {
-                    pthread_mutex_lock(&mlock);
-                }
-
-                void unlock() {
-                    pthread_mutex_unlock(&mlock);
-                }
-        };
-
         class perf_control {
-            // 2 cores will be requested if framerate is beyond 45 fps
-            static const int MIN_FRAME_DURATION_FOR_PERF_REQUEST_US = (1e6 / 45);
             typedef int (*perf_lock_acquire_t)(int, int, int*, int);
             typedef int (*perf_lock_release_t)(int);
 
@@ -1363,20 +1355,14 @@ class omx_vdec: public qc_omx_component
                 int m_perf_handle;
                 perf_lock_acquire_t m_perf_lock_acquire;
                 perf_lock_release_t m_perf_lock_release;
-                bool load_lib();
-                struct mpctl_stats {
-                  int vid_inst_count;
-                  bool vid_acquired;
-                  int vid_disp_handle;
-                };
-                static struct mpctl_stats mpctl_obj;
-                static perf_lock m_perf_lock;
 
             public:
                 perf_control();
                 ~perf_control();
-                void request_cores(int frame_duration_us);
-                void send_hint_to_mpctl(bool state);
+                bool load_perf_library();
+                int perf_lock_acquire();
+                void perf_lock_release();
+                int m_perf_control_enable;
         };
         perf_control m_perf_control;
 
@@ -1422,8 +1408,10 @@ class omx_vdec: public qc_omx_component
         }
 
         static OMX_ERRORTYPE describeColorFormat(OMX_PTR params);
-        void prefetchNewBuffers();
-
+        bool prefetch_buffers(unsigned long prefetch_count,
+                    unsigned long prefetch_size, unsigned ioctl_code,
+                    unsigned ion_flag);
+        unsigned char m_prefetch_done;
 
         client_extradata_info m_client_out_extradata_info;
 
@@ -1452,6 +1440,7 @@ class omx_vdec: public qc_omx_component
 public:
         bool is_down_scalar_enabled;
         bool m_is_split_mode;
+        bool m_buffer_error;
 };
 
 enum instance_state {

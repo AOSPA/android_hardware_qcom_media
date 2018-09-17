@@ -76,7 +76,7 @@ class omx_venc: public omx_video
         bool m_max_allowed_bitrate_check;
         bool m_stopped;
         bool set_format;
-
+        bool update_offset;
         int dev_handle_output_extradata(void *, int);
         int dev_handle_input_extradata(void *, int, int);
         bool dev_buffer_ready_to_queue(OMX_BUFFERHEADERTYPE *buffer);
@@ -200,6 +200,8 @@ class omx_venc: public omx_video
         bool dev_get_hevc_profile(OMX_U32*) { return false; }
         bool dev_handle_client_input_extradata(void*) { return false; }
         void dev_get_color_format_as_string(char *, int, unsigned) {};
+        /* Only NV12 is supported so not setting UBWC & 10Bit flag */
+        void dev_get_consumer_usage(OMX_U32* usage) { *usage = 0; }
         static inline unsigned int SWVENC_Y_STRIDE(int color_fmt, int width)
         {
             unsigned int alignment, stride = 0;
