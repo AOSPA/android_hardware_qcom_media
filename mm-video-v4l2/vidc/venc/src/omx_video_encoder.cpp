@@ -247,7 +247,7 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.heic",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
         strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
-        codec_type = OMX_VIDEO_CodingHEVC;
+        codec_type = OMX_VIDEO_CodingImageHEIC;
     } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc.secure",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
         strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
@@ -600,6 +600,9 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
 
     OMX_INIT_STRUCT(&m_sBaseLayerID, OMX_SKYPE_VIDEO_CONFIG_BASELAYERPID);
 
+    OMX_INIT_STRUCT(&m_sParamLinearColorFormat, QOMX_ENABLETYPE);
+    m_sParamLinearColorFormat.bEnable = OMX_FALSE;
+
     m_state                   = OMX_StateLoaded;
     m_sExtraData = 0;
 
@@ -900,8 +903,11 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoAvc");
 
                 avc_param.nBFrames = 0;
+                avc_param.bEntropyCodingCABAC = (OMX_BOOL)(0);
+                avc_param.nCabacInitIdc = 0;
                 if ((pParam->eProfile == OMX_VIDEO_AVCProfileHigh)||
-                        (pParam->eProfile == OMX_VIDEO_AVCProfileMain)) {
+                    (pParam->eProfile == OMX_VIDEO_AVCProfileMain)||
+                    (pParam->eProfile == OMX_VIDEO_AVCProfileConstrainedHigh)) {
 
                     if (pParam->nBFrames) {
                         avc_param.nBFrames = pParam->nBFrames;
@@ -914,7 +920,7 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     avc_param.nCabacInitIdc = 0;
                 } else {
                     if (pParam->nBFrames) {
-                        DEBUG_PRINT_ERROR("Warning: B frames not supported");
+                        DEBUG_PRINT_HIGH("B frames not supported with profile %x", pParam->eProfile);
                     }
                 }
 
@@ -1140,15 +1146,15 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 AllocateNativeHandleParams* allocateNativeHandleParams = (AllocateNativeHandleParams *) paramData;
 
                 if (!secure_session) {
-                    DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle allowed only in secure session");
+                    DEBUG_PRINT_INFO("WARN: Enable/Disable allocate-native-handle allowed only in secure session");
                     eRet = OMX_ErrorUnsupportedSetting;
                     break;
                 } else if (allocateNativeHandleParams->nPortIndex != PORT_INDEX_OUT) {
-                    DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle allowed only on Output port!");
+                    DEBUG_PRINT_INFO("WARN: Enable/Disable allocate-native-handle allowed only on Output port!");
                     eRet = OMX_ErrorUnsupportedSetting;
                     break;
                 } else if (m_out_mem_ptr) {
-                    DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle is not allowed since Output port is not free !");
+                    DEBUG_PRINT_INFO("WARN: Enable/Disable allocate-native-handle is not allowed since Output port is not free !");
                     eRet = OMX_ErrorInvalidState;
                     break;
                 }
@@ -1314,11 +1320,11 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                         }
                     }
                 } else if (pParam->nPortIndex == PORT_INDEX_OUT && secure_session) {
-                            DEBUG_PRINT_ERROR("set_parameter: metamode is "
+                            DEBUG_PRINT_INFO("WARN: set_parameter: metamode is "
                             "valid for input port only in secure session");
                             return OMX_ErrorUnsupportedSetting;
                 } else {
-                    DEBUG_PRINT_ERROR("set_parameter: metamode is "
+                    DEBUG_PRINT_INFO("WARN: set_parameter: metamode is "
                             "valid for input port only");
                     eRet = OMX_ErrorUnsupportedIndex;
                 }
@@ -1730,10 +1736,32 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 VALIDATE_OMX_PARAM_DATA(paramData, QOMX_ENABLETYPE);
                 if (!handle->venc_set_param(paramData,
                             (OMX_INDEXTYPE)OMX_QTIIndexParamColorSpaceConversion)) {
-                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamLowLatencyMode failed");
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamColorSpaceConversion failed");
                     return OMX_ErrorUnsupportedSetting;
                 }
                 memcpy(&m_sParamColorSpaceConversion, paramData, sizeof(QOMX_ENABLETYPE));
+                break;
+            }
+        case OMX_QTIIndexParamEnableLinearColorFormat:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_ENABLETYPE);
+                if (!handle->venc_set_param(paramData,
+                            (OMX_INDEXTYPE)OMX_QTIIndexParamEnableLinearColorFormat)) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamEnableLinearColorFormat failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sParamLinearColorFormat, paramData, sizeof(QOMX_ENABLETYPE));
+                break;
+            }
+        case OMX_QTIIndexParamVideoEnableBlur:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_QTI_VIDEO_CONFIG_BLURINFO);
+                if (!handle->venc_set_param(paramData,
+                            (OMX_INDEXTYPE)OMX_QTIIndexParamVideoEnableBlur)) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamVideoEnableBlur failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_blurInfo, paramData, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
                 break;
             }
         case OMX_IndexParamVideoSliceFMO:
@@ -1752,7 +1780,7 @@ bool omx_venc::update_profile_level()
     OMX_U32 eProfile, eLevel;
 
     if (!handle->venc_get_profile_level(&eProfile,&eLevel)) {
-        DEBUG_PRINT_ERROR("Failed to update the profile_level");
+        DEBUG_PRINT_INFO("WARN: Failed to update the profile_level");
         return false;
     }
 
@@ -1974,10 +2002,6 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                     DEBUG_PRINT_ERROR("ERROR: un supported Rotation %u", (unsigned int)pParam->nRotation);
                     return OMX_ErrorUnsupportedSetting;
                 }
-                if (m_sConfigFrameRotation.nRotation == pParam->nRotation) {
-                    DEBUG_PRINT_HIGH("set_config: rotation (%d) not changed", pParam->nRotation);
-                    break;
-                }
 
                 if (handle->venc_set_config(configData,
                     OMX_IndexConfigCommonRotate) != true) {
@@ -1985,15 +2009,6 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                         return OMX_ErrorUnsupportedSetting;
                 }
                 m_sConfigFrameRotation.nRotation = pParam->nRotation;
-
-                // Update output-port resolution (since it might have been flipped by rotation)
-                if (handle->venc_get_dimensions(PORT_INDEX_OUT,
-                        &m_sOutPortDef.format.video.nFrameWidth,
-                        &m_sOutPortDef.format.video.nFrameHeight)) {
-                    DEBUG_PRINT_HIGH("set Rotation: updated dimensions = %u x %u",
-                            m_sOutPortDef.format.video.nFrameWidth,
-                            m_sOutPortDef.format.video.nFrameHeight);
-                }
                 break;
             }
         case OMX_QcomIndexConfigVideoFramePackingArrangement:
@@ -2180,7 +2195,7 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                     DEBUG_PRINT_ERROR("Failed to set OMX_QTIIndexConfigVideoBlurResolution");
                     return OMX_ErrorUnsupportedSetting;
                 }
-                memcpy(&m_blurInfo, pParam, sizeof(m_blurInfo));
+                memcpy(&m_blurInfo, pParam, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
                 break;
            }
         case OMX_QcomIndexConfigH264Transform8x8:

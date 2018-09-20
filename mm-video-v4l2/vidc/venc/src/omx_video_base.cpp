@@ -286,6 +286,7 @@ omx_video::omx_video():
     mMapPixelFormat2Converter.insert({
             {HAL_PIXEL_FORMAT_RGBA_8888, RGBA8888},
             {HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS_UBWC, NV12_UBWC},
+            {HAL_PIXEL_FORMAT_NV12_HEIF, NV12_512},
                 });
 
     pthread_mutex_init(&m_lock, NULL);
@@ -2164,6 +2165,14 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     m_sParamConsumerUsage);
                 break;
             }
+        case OMX_QTIIndexParamVideoEnableBlur:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_QTI_VIDEO_CONFIG_BLURINFO);
+                OMX_QTI_VIDEO_CONFIG_BLURINFO *pBlurInfo =
+                    reinterpret_cast<OMX_QTI_VIDEO_CONFIG_BLURINFO *>(paramData);
+                memcpy(pBlurInfo, &m_blurInfo, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
+                break;
+            }
         case OMX_IndexParamVideoSliceFMO:
         default:
             {
@@ -2336,7 +2345,7 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                OMX_QTI_VIDEO_CONFIG_BLURINFO* pParam =
                    reinterpret_cast<OMX_QTI_VIDEO_CONFIG_BLURINFO*>(configData);
                DEBUG_PRINT_LOW("get_config: OMX_QTIIndexConfigVideoBlurResolution");
-               memcpy(pParam, &m_blurInfo, sizeof(m_blurInfo));
+               memcpy(pParam, &m_blurInfo, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
                break;
            }
        case OMX_QTIIndexConfigDescribeColorAspects:
@@ -2346,7 +2355,7 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                     reinterpret_cast<DescribeColorAspectsParams*>(configData);
                 DEBUG_PRINT_LOW("get_config: OMX_QTIIndexConfigDescribeColorAspects");
                 if (pParam->bRequestingDataSpace) {
-                    DEBUG_PRINT_ERROR("Does not handle dataspace request");
+                    DEBUG_PRINT_LOW("Does not handle dataspace request. Please ignore this Unsupported Setting (0x80001019).");
                     return OMX_ErrorUnsupportedSetting;
                 }
                 if (pParam->bDataSpaceChanged == OMX_TRUE) {
@@ -4180,16 +4189,6 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
             DEBUG_PRINT_LOW("ETB (meta-gralloc) fd = %d, offset = %d, size = %d",
                     Input_pmem_info.fd, Input_pmem_info.offset,
                     Input_pmem_info.size);
-            // if input buffer dimensions is different from what is configured,
-            // reject the buffer
-            if ((int)m_sInPortDef.format.video.nFrameWidth != handle->unaligned_width ||
-                    (int)m_sInPortDef.format.video.nFrameHeight != handle->unaligned_height) {
-                ALOGE("Graphic buf size(%dx%d) does not match configured size(%ux%u)",
-                        handle->unaligned_width, handle->unaligned_height,
-                        m_sInPortDef.format.video.nFrameWidth, m_sInPortDef.format.video.nFrameHeight);
-                post_event ((unsigned long)buffer, 0, OMX_COMPONENT_GENERATE_EBD);
-                return OMX_ErrorNone;
-            }
         }
         if (dev_use_buf(PORT_INDEX_IN) != true) {
             DEBUG_PRINT_ERROR("ERROR: in dev_use_buf");
@@ -5258,6 +5257,9 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
         bool interlaced = is_ubwc_interlaced(handle);
         int  full_range_flag = m_sConfigColorAspects.sAspects.mRange == ColorAspects::RangeFull ?
                                private_handle_t::PRIV_FLAGS_ITU_R_601_FR : 0;
+
+        if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingImageHEIC)
+            c2dDestFmt = NV12_512;
 
         if (c2dcc.getConversionNeeded() &&
             c2dcc.isPropChanged(m_sInPortDef.format.video.nFrameWidth,

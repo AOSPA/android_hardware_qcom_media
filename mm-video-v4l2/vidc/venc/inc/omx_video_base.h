@@ -53,6 +53,7 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <pthread.h>
 #include <semaphore.h>
 #include <media/hardware/HardwareAPI.h>
+#include "vidc_common.h"
 #include "OMX_Core.h"
 #include "OMX_QCOMExtns.h"
 #include "OMX_Skype_VideoExtensions.h"
@@ -108,24 +109,6 @@ static const char* MEM_DEVICE = "/dev/ion";
         (unsigned)((OMX_BUFFERHEADERTYPE *)bufHdr)->nFilledLen,\
         (unsigned)((OMX_BUFFERHEADERTYPE *)bufHdr)->nTimeStamp)
 
-// BitMask Management logic
-#define BITS_PER_INDEX        64
-#define BITMASK_SIZE(mIndex) (((mIndex) + BITS_PER_INDEX - 1)/BITS_PER_INDEX)
-#define BITMASK_OFFSET(mIndex) ((mIndex)/BITS_PER_INDEX)
-#define BITMASK_FLAG(mIndex) ((uint64_t)1 << ((mIndex) % BITS_PER_INDEX))
-#define BITMASK_CLEAR(mArray,mIndex) (mArray)[BITMASK_OFFSET(mIndex)] \
-    &=  ~(BITMASK_FLAG(mIndex))
-#define BITMASK_SET(mArray,mIndex)  (mArray)[BITMASK_OFFSET(mIndex)] \
-    |=  BITMASK_FLAG(mIndex)
-#define BITMASK_PRESENT(mArray,mIndex) ((mArray)[BITMASK_OFFSET(mIndex)] \
-        & BITMASK_FLAG(mIndex))
-#define BITMASK_ABSENT(mArray,mIndex) (((mArray)[BITMASK_OFFSET(mIndex)] \
-            & BITMASK_FLAG(mIndex)) == 0x0)
-#define BITMASK_PRESENT(mArray,mIndex) ((mArray)[BITMASK_OFFSET(mIndex)] \
-        & BITMASK_FLAG(mIndex))
-#define BITMASK_ABSENT(mArray,mIndex) (((mArray)[BITMASK_OFFSET(mIndex)] \
-            & BITMASK_FLAG(mIndex)) == 0x0)
-
 /** STATUS CODES*/
 /* Base value for status codes */
 #define VEN_S_BASE	0x00000000
@@ -159,6 +142,7 @@ static const char* MEM_DEVICE = "/dev/ion";
 #endif
 
 void* message_thread_enc(void *);
+bool is_ubwc_interlaced(private_handle_t *handle);
 
 enum omx_venc_extradata_types {
     VENC_EXTRADATA_SLICEINFO = 0x100,
@@ -754,6 +738,7 @@ class omx_video: public qc_omx_component
         OMX_U32 m_nOperatingRate;
         QOMX_ENABLETYPE m_sParamColorSpaceConversion;
         OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE m_sParamAndroidImageGrid;
+        QOMX_ENABLETYPE m_sParamLinearColorFormat;
 
         // fill this buffer queue
         omx_cmd_queue m_ftb_q;
