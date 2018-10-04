@@ -1978,8 +1978,11 @@ int omx_vdec::update_resolution(int width, int height, int stride, int scan_line
 
 int omx_vdec::log_input_buffers(const char *buffer_addr, int buffer_len, uint64_t timeStamp, int fd)
 {
+    if (!m_debug.in_buffer_log)
+        return 0;
+
 #ifdef USE_ION
-    start_buffer_access(fd);
+    do_cache_operations(fd);
 #else
     (void)fd;
 #endif
@@ -2010,7 +2013,7 @@ int omx_vdec::log_input_buffers(const char *buffer_addr, int buffer_len, uint64_
                              m_debug.infile_name, errno, strerror(errno));
             m_debug.infile_name[0] = '\0';
 #ifdef USE_ION
-            end_buffer_access(fd);
+            do_cache_operations(fd);
 #endif
             return -1;
         }
@@ -2034,7 +2037,7 @@ int omx_vdec::log_input_buffers(const char *buffer_addr, int buffer_len, uint64_
         fwrite(buffer_addr, buffer_len, 1, m_debug.infile);
     }
 #ifdef USE_ION
-    end_buffer_access(fd);
+    do_cache_operations(fd);
 #endif
     return 0;
 }
@@ -2658,6 +2661,7 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
 
     OMX_INIT_STRUCT(&m_sParamLowLatency, QOMX_EXTNINDEX_VIDEO_LOW_LATENCY_MODE);
     m_sParamLowLatency.nNumFrames = 0;
+    m_sParamLowLatency.bEnableLowLatencyMode = OMX_FALSE;
 
     return eRet;
 }
@@ -3505,7 +3509,8 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
                              OMX_VIDEO_HEVCProfileMain10HDR10 };
     int mpeg2_profiles[2] = { OMX_VIDEO_MPEG2ProfileSimple,
                               OMX_VIDEO_MPEG2ProfileMain};
-    int vp9_profiles[2] = { OMX_VIDEO_VP9Profile0,
+    int vp9_profiles[3] = { OMX_VIDEO_VP9Profile0,
+                            OMX_VIDEO_VP9Profile2,
                             OMX_VIDEO_VP9Profile2HDR};
 
     if (!profileLevelType)
@@ -3606,12 +3611,13 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
     /* Check if the profile is supported by driver or not  */
     /* During query caps of profile driver sends a mask of */
     /* of all v4l2 profiles supported(in the flags field)  */
-    if(output_capability != V4L2_PIX_FMT_HEVC) {
+    if((output_capability != V4L2_PIX_FMT_HEVC) &&
+         (output_capability != V4L2_PIX_FMT_VP9)) {
         if (!profile_level_converter::convert_omx_profile_to_v4l2(output_capability, profileLevelType->eProfile, &v4l2_profile)) {
             DEBUG_PRINT_ERROR("Invalid profile, cannot find corresponding omx profile");
             return OMX_ErrorHardware;
         }
-    }else { //convert omx profile to v4l2 profile for HEVC Main10 and Main10HDR10 profiles,seperately
+    }else if(output_capability == V4L2_PIX_FMT_HEVC) { //convert omx profile to v4l2 profile for HEVC Main10 and Main10HDR10 profiles,seperately
         switch (profileLevelType->eProfile) {
             case OMX_VIDEO_HEVCProfileMain:
                 v4l2_profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
@@ -3624,8 +3630,20 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
                 DEBUG_PRINT_ERROR("Invalid profile, cannot find corresponding omx profile");
                 return OMX_ErrorHardware;
         }
+    }else { //convert omx profile to v4l2 profile for VP9 Profile2 and VP9 Profile2HDR profiles,seperately
+        switch (profileLevelType->eProfile) {
+            case OMX_VIDEO_VP9Profile0:
+                v4l2_profile = V4L2_MPEG_VIDC_VIDEO_VP9_PROFILE_P0;
+                break;
+            case OMX_VIDEO_VP9Profile2:
+            case OMX_VIDEO_VP9Profile2HDR:
+                v4l2_profile = V4L2_MPEG_VIDC_VIDEO_VP9_PROFILE_P2_10;
+                break;
+            default:
+                DEBUG_PRINT_ERROR("Invalid profile, cannot find corresponding omx profile");
+                return OMX_ErrorHardware;
+        }
     }
-
     if(!((profile_cap.flags >> v4l2_profile) & 0x1)) {
         DEBUG_PRINT_ERROR("%s: Invalid index corresponding profile not supported : %d ",__FUNCTION__, profileLevelType->eProfile);
         eRet = OMX_ErrorNoMore;
@@ -3880,6 +3898,9 @@ OMX_ERRORTYPE  omx_vdec::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 DEBUG_PRINT_LOW("get_parameter: describeColorFormat");
                 VALIDATE_OMX_PARAM_DATA(paramData, DescribeColorFormatParams);
                 eRet = describeColorFormat(paramData);
+                if (eRet == OMX_ErrorUnsupportedSetting) {
+                    DEBUG_PRINT_LOW("The standard OMX linear formats are understood by client. Please ignore this  Unsupported Setting (0x80001019).");
+                }
                 break;
             }
 #endif
@@ -4701,6 +4722,8 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                 if (rc) {
                                     DEBUG_PRINT_ERROR("Set low latency failed");
                                     eRet = OMX_ErrorUnsupportedSetting;
+                                } else {
+                                    m_sParamLowLatency.bEnableLowLatencyMode = pParam->bEnableLowLatencyMode;
                                 }
                                break;
                            }
@@ -4887,7 +4910,7 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 VALIDATE_OMX_PARAM_DATA(paramData, AllocateNativeHandleParams);
 
                 if (allocateNativeHandleParams->nPortIndex != OMX_CORE_INPUT_PORT_INDEX) {
-                    DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle allowed only on input port!");
+                    DEBUG_PRINT_LOW("Enable/Disable allocate-native-handle allowed only on input port!. Please ignore this Unsupported Setting (0x80001019).");
                     eRet = OMX_ErrorUnsupportedSetting;
                     break;
                 } else if (m_inp_mem_ptr) {
@@ -5274,7 +5297,7 @@ OMX_ERRORTYPE  omx_vdec::get_config(OMX_IN OMX_HANDLETYPE      hComp,
             DescribeColorAspectsParams *params = (DescribeColorAspectsParams *)configData;
 
             if (params->bRequestingDataSpace) {
-                DEBUG_PRINT_ERROR("Does not handle dataspace request");
+                DEBUG_PRINT_LOW("Does not handle dataspace request. Please ignore this Unsupported Setting (0x80001019).");
                 return OMX_ErrorUnsupportedSetting;
             }
 
@@ -5678,7 +5701,7 @@ char *omx_vdec::ion_map(int fd, int len)
                                 MAP_SHARED, fd, 0);
     if (bufaddr != MAP_FAILED) {
 #ifdef USE_ION
-    start_buffer_access(fd);
+    do_cache_operations(fd);
 #endif
     }
     return bufaddr;
@@ -5703,7 +5726,7 @@ char *omx_vdec::ion_map(int fd, int len)
 OMX_ERRORTYPE omx_vdec::ion_unmap(int fd, void *bufaddr, int len)
 {
 #ifdef USE_ION
-    end_buffer_access(fd);
+    do_cache_operations(fd);
 #else
     (void)fd;
 #endif
@@ -9676,34 +9699,22 @@ void omx_vdec::free_ion_memory(struct vdec_ion *buf_ion_info)
     }
 }
 
-void omx_vdec::start_buffer_access(int fd)
+void omx_vdec::do_cache_operations(int fd)
 {
-    struct dma_buf_sync buf_sync;
-
     if (fd < 0)
         return;
 
-    buf_sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW;
-    int rc = ioctl(fd, DMA_BUF_IOCTL_SYNC, &buf_sync);
-    if (rc) {
-        DEBUG_PRINT_ERROR("Failed DMA_BUF_IOCTL_SYNC start fd : %d", fd);
+    struct dma_buf_sync dma_buf_sync_data[2];
+    dma_buf_sync_data[0].flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW;
+    dma_buf_sync_data[1].flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW;
+
+    for(unsigned int i=0; i<2; i++) {
+        int rc = ioctl(fd, DMA_BUF_IOCTL_SYNC, &dma_buf_sync_data[i]);
+        if (rc < 0) {
+            DEBUG_PRINT_ERROR("Failed DMA_BUF_IOCTL_SYNC %s fd : %d", i==0?"start":"end", fd);
+            return;
+        }
     }
-    return;
-}
-
-void omx_vdec::end_buffer_access(int fd)
-{
-    struct dma_buf_sync buf_sync;
-
-    if (fd < 0)
-        return;
-
-    buf_sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW;
-    int rc = ioctl(fd, DMA_BUF_IOCTL_SYNC, &buf_sync);
-    if (rc) {
-        DEBUG_PRINT_ERROR("Failed DMA_BUF_IOCTL_SYNC end fd : %d", fd);
-    }
-    return;
 }
 
 #endif
@@ -10572,9 +10583,12 @@ bool omx_vdec::handle_color_space_info(void *data)
 
                 if (seqdisp_payload && seqdisp_payload->color_descp) {
 
-                    convert_color_space_info(seqdisp_payload->color_primaries, 1,
+                    convert_color_space_info(seqdisp_payload->color_primaries, 0,
                             seqdisp_payload->transfer_char, seqdisp_payload->matrix_coeffs,
                             aspects);
+                    /* MPEG2 seqdisp payload doesn't give range info. Hence assing the value
+                     * set by client */
+                    aspects->mRange = m_client_color_space.sAspects.mRange;
                     m_disp_hor_size = seqdisp_payload->disp_width;
                     m_disp_vert_size = seqdisp_payload->disp_height;
                 }
@@ -11413,6 +11427,9 @@ OMX_ERRORTYPE omx_vdec::enable_extradata(OMX_U64 requested_extradata,
                 case V4L2_PIX_FMT_VP8:
                 case V4L2_PIX_FMT_VP9:
                     control.value = V4L2_MPEG_VIDC_EXTRADATA_VPX_COLORSPACE;
+                    break;
+                case V4L2_PIX_FMT_MPEG2:
+                    control.value = V4L2_MPEG_VIDC_EXTRADATA_MPEG2_SEQDISP;
                     break;
                 default:
                     DEBUG_PRINT_HIGH("Don't support Disp info for this codec : %s", drv_ctx.kind);
@@ -12308,7 +12325,7 @@ OMX_BUFFERHEADERTYPE* omx_vdec::allocate_color_convert_buf::get_il_buf_hdr
         bool status = false;
         if (!omx->in_reconfig && !omx->output_flush_progress && bufadd->nFilledLen) {
             pthread_mutex_lock(&omx->c_lock);
-            cache_clean_buffer(index);
+            omx->do_cache_operations(omx->drv_ctx.op_intermediate_buf_ion_info[index].data_fd);
 
             DEBUG_PRINT_INFO("C2D: Start color convertion");
             status = c2dcc.convertC2D(
@@ -12317,7 +12334,7 @@ OMX_BUFFERHEADERTYPE* omx_vdec::allocate_color_convert_buf::get_il_buf_hdr
                              omx->drv_ctx.ptr_outputbuffer[index].pmem_fd,
                              omx->m_out_mem_ptr[index].pBuffer,
                              omx->m_out_mem_ptr[index].pBuffer);
-
+            omx->do_cache_operations(omx->drv_ctx.op_intermediate_buf_ion_info[index].data_fd);
             if (!status) {
                 DEBUG_PRINT_ERROR("Failed color conversion %d", status);
                 m_out_mem_ptr_client[index].nFilledLen = 0;
@@ -12329,7 +12346,6 @@ OMX_BUFFERHEADERTYPE* omx_vdec::allocate_color_convert_buf::get_il_buf_hdr
                 c2dcc.getBuffFilledLen(C2D_OUTPUT, filledLen);
                 m_out_mem_ptr_client[index].nFilledLen = filledLen;
                 omx->m_out_mem_ptr[index].nFilledLen = filledLen;
-                cache_clean_invalidate_buffer(index);
             }
             pthread_mutex_unlock(&omx->c_lock);
         } else {
@@ -12428,35 +12444,6 @@ bool omx_vdec::allocate_color_convert_buf::get_color_format(OMX_COLOR_FORMATTYPE
         }
     }
     return status;
-}
-
-OMX_ERRORTYPE omx_vdec::allocate_color_convert_buf::cache_ops(unsigned int index)
-{
-    if (!enabled) {
-        return OMX_ErrorNone;
-    }
-
-    if (!omx || index >= omx->drv_ctx.op_buf.actualcount) {
-        DEBUG_PRINT_ERROR("%s: Invalid param", __func__);
-        return OMX_ErrorBadParameter;
-    }
-
-    struct dma_buf_sync dma_buf_sync_data[2];
-    dma_buf_sync_data[0].flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW;
-    dma_buf_sync_data[1].flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW;
-
-    for(unsigned int i=0; i<2; i++) {
-        int ret = ioctl(omx->drv_ctx.op_intermediate_buf_ion_info[index].data_fd,
-                        DMA_BUF_IOCTL_SYNC, &dma_buf_sync_data[i]);
-        if (ret < 0) {
-            DEBUG_PRINT_ERROR("Cache %s failed: %s\n",
-                              (i==0) ? "START" : "END",
-                              strerror(errno));
-            return OMX_ErrorUndefined;
-        }
-    }
-
-    return OMX_ErrorNone;
 }
 
 void omx_vdec::send_codec_config() {

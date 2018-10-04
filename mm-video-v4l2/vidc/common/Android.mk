@@ -25,6 +25,7 @@ libmm-vidc-inc      += $(QCOM_MEDIA_ROOT)/mm-core/inc
 libmm-vidc-inc      += $(TARGET_OUT_HEADERS)/qcom/display
 libmm-vidc-inc      += $(QCOM_MEDIA_ROOT)/libc2dcolorconvert
 libmm-vidc-inc      += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
+libmm-vidc-inc      += $(TOP)/hardware/libhardware/include
 
 LOCAL_MODULE                    := libOmxVidcCommon
 LOCAL_MODULE_TAGS               := optional
