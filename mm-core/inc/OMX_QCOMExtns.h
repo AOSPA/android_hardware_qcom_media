@@ -46,6 +46,7 @@ extern "C" {
 #include "OMX_Core.h"
 #include "OMX_Video.h"
 #include "string.h"
+#include "OMX_VideoExt.h"
 
 #define OMX_VIDEO_MAX_HP_LAYERS 6
 
@@ -663,6 +664,12 @@ enum OMX_QCOM_EXTN_INDEXTYPE
 
     /* Set Color Space Conversion */
     OMX_QTIIndexParamColorSpaceConversion = 0x7F000078,
+
+    /* Enable linear color format */
+    OMX_QTIIndexParamEnableLinearColorFormat = 0x7F000079,
+
+    /* Enable Blur */
+    OMX_QTIIndexParamVideoEnableBlur = 0x7F00007A,
 
     /* Capabilities */
     OMX_QTIIndexParamCapabilitiesVTDriverVersion = 0x7F100000,
@@ -1381,28 +1388,29 @@ typedef struct OMX_QTI_VIDEO_CONFIG_ROIINFO {
 } OMX_QTI_VIDEO_CONFIG_ROIINFO;
 
 /**
- * When enable below BLUR feature, a filter will be applied to the
- * input YUV to achieve the similar effect as downscaling to the
- * BLUR resolution specified in eTargetResol.
- * Could use the 4 pre-defined resolutions, 240p, 480p, 720p, 1080p,
- * or could specify custom resolution, use bit[31:16] for width,
- * bit[15:0] for height.
+ * Specifies the Blur resolution or Enable/Disable config.
+ * When enabled, a filter will be applied to the input YUV, to
+ * achieve an effect similar to downscaling to the BLUR
+ * resolution specified in nBlurInfo. Blur effect is applied
+ * starting from the next IDR frame.
+ *
+ *  nSize              : Size of Structure in bytes
+ *  nVersion           : OpenMAX IL specification version information
+ *  nPortIndex         : Index of the port.
+ *  nBlurInfo        0 : Disable Blur. If set before start, blur
+ *                       is disabled throughout the session.
+ *                   1 : Enable Blur. Must be set before start.
+ *                       Blur is applied when valid resolution
+ *                       is set.
+ *                   n : Custom resolution, bit[31:16] for width
+ *                       bit[15:0] for height.
 */
-
-typedef enum OMX_QTI_VIDEO_BLUR_RESOLUTION {
-    BLUR_RESOL_DISABLED = 0,
-    BLUR_RESOL_240      = 1,
-    BLUR_RESOL_480      = 2,
-    BLUR_RESOL_720      = 3,
-    BLUR_RESOL_1080     = 4,
-    BLUR_RESOL_MAX      = 0xFFFFFFFF,
-} OMX_QTI_VIDEO_BLUR_RESOLUTION;
 
 typedef struct OMX_QTI_VIDEO_CONFIG_BLURINFO {
     OMX_U32         nSize;
     OMX_VERSIONTYPE nVersion;
     OMX_U32         nPortIndex;
-    OMX_QTI_VIDEO_BLUR_RESOLUTION eTargetResol;  /* if custom resolution, bit[31:16] for width, bit[15:0] for height*/
+    OMX_U32         nBlurInfo;
 } OMX_QTI_VIDEO_CONFIG_BLURINFO;
 
 typedef enum OMX_QCOM_EXTRADATATYPE
@@ -1511,10 +1519,10 @@ typedef enum QOMX_VIDEO_AVCPROFILETYPE {
     QOMX_VIDEO_AVCProfileHigh10        = OMX_VIDEO_AVCProfileHigh10,
     QOMX_VIDEO_AVCProfileHigh422       = OMX_VIDEO_AVCProfileHigh422,
     QOMX_VIDEO_AVCProfileHigh444       = OMX_VIDEO_AVCProfileHigh444,
+    QOMX_VIDEO_AVCProfileConstrainedBaseline = OMX_VIDEO_AVCProfileConstrainedBaseline,
+    QOMX_VIDEO_AVCProfileConstrainedHigh     = OMX_VIDEO_AVCProfileConstrainedHigh,
     /* QCom specific profile indexes */
-    QOMX_VIDEO_AVCProfileConstrained           = OMX_VIDEO_AVCProfileVendorStartUnused,
-    QOMX_VIDEO_AVCProfileConstrainedBaseline,
-    QOMX_VIDEO_AVCProfileConstrainedHigh,
+    QOMX_VIDEO_AVCProfileConstrained         = OMX_VIDEO_AVCProfileVendorStartUnused
 } QOMX_VIDEO_AVCPROFILETYPE;
 
 

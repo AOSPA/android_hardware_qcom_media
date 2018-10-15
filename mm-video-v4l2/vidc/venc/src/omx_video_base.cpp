@@ -286,6 +286,7 @@ omx_video::omx_video():
     mMapPixelFormat2Converter.insert({
             {HAL_PIXEL_FORMAT_RGBA_8888, RGBA8888},
             {HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS_UBWC, NV12_UBWC},
+            {HAL_PIXEL_FORMAT_NV12_HEIF, NV12_512},
                 });
 
     pthread_mutex_init(&m_lock, NULL);
@@ -1590,6 +1591,16 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     }
 
                     memcpy(portDefn, &m_sOutPortDef, sizeof(m_sOutPortDef));
+                    // Tiling in HW expects output port def to be aligned to tile size
+                    // At the same time, FWK needs original WxH for various purposes
+                    // Sending input WxH as output port def WxH to FWK
+                    if (m_sOutPortDef.format.video.eCompressionFormat ==
+                        OMX_VIDEO_CodingImageHEIC) {
+                        portDefn->format.video.nFrameWidth =
+                            m_sInPortDef.format.video.nFrameWidth;
+                        portDefn->format.video.nFrameHeight =
+                            m_sInPortDef.format.video.nFrameHeight;
+                    }
 
                     if (secure_session || allocate_native_handle) {
                         portDefn->nBufferSize =
@@ -1720,6 +1731,15 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 QOMX_VIDEO_PARAM_TMETYPE* pParam = (QOMX_VIDEO_PARAM_TMETYPE*)paramData;
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoTme");
                 memcpy(pParam, &m_sParamTME, sizeof(m_sParamTME));
+                break;
+            }
+        case OMX_IndexParamVideoAndroidImageGrid:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE);
+                OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE* pParam =
+                    (OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE*)paramData;
+                DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoAndroidImageGrid");
+                memcpy(pParam, &m_sParamAndroidImageGrid, sizeof(m_sParamAndroidImageGrid));
                 break;
             }
         case OMX_IndexParamVideoProfileLevelQuerySupported:
@@ -2145,6 +2165,14 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     m_sParamConsumerUsage);
                 break;
             }
+        case OMX_QTIIndexParamVideoEnableBlur:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_QTI_VIDEO_CONFIG_BLURINFO);
+                OMX_QTI_VIDEO_CONFIG_BLURINFO *pBlurInfo =
+                    reinterpret_cast<OMX_QTI_VIDEO_CONFIG_BLURINFO *>(paramData);
+                memcpy(pBlurInfo, &m_blurInfo, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
+                break;
+            }
         case OMX_IndexParamVideoSliceFMO:
         default:
             {
@@ -2317,7 +2345,7 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                OMX_QTI_VIDEO_CONFIG_BLURINFO* pParam =
                    reinterpret_cast<OMX_QTI_VIDEO_CONFIG_BLURINFO*>(configData);
                DEBUG_PRINT_LOW("get_config: OMX_QTIIndexConfigVideoBlurResolution");
-               memcpy(pParam, &m_blurInfo, sizeof(m_blurInfo));
+               memcpy(pParam, &m_blurInfo, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
                break;
            }
        case OMX_QTIIndexConfigDescribeColorAspects:
@@ -2327,7 +2355,7 @@ OMX_ERRORTYPE  omx_video::get_config(OMX_IN OMX_HANDLETYPE      hComp,
                     reinterpret_cast<DescribeColorAspectsParams*>(configData);
                 DEBUG_PRINT_LOW("get_config: OMX_QTIIndexConfigDescribeColorAspects");
                 if (pParam->bRequestingDataSpace) {
-                    DEBUG_PRINT_ERROR("Does not handle dataspace request");
+                    DEBUG_PRINT_LOW("Does not handle dataspace request. Please ignore this Unsupported Setting (0x80001019).");
                     return OMX_ErrorUnsupportedSetting;
                 }
                 if (pParam->bDataSpaceChanged == OMX_TRUE) {
@@ -4161,16 +4189,6 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_proxy(OMX_IN OMX_HANDLETYPE  hComp,
             DEBUG_PRINT_LOW("ETB (meta-gralloc) fd = %d, offset = %d, size = %d",
                     Input_pmem_info.fd, Input_pmem_info.offset,
                     Input_pmem_info.size);
-            // if input buffer dimensions is different from what is configured,
-            // reject the buffer
-            if ((int)m_sInPortDef.format.video.nFrameWidth != handle->unaligned_width ||
-                    (int)m_sInPortDef.format.video.nFrameHeight != handle->unaligned_height) {
-                ALOGE("Graphic buf size(%dx%d) does not match configured size(%ux%u)",
-                        handle->unaligned_width, handle->unaligned_height,
-                        m_sInPortDef.format.video.nFrameWidth, m_sInPortDef.format.video.nFrameHeight);
-                post_event ((unsigned long)buffer, 0, OMX_COMPONENT_GENERATE_EBD);
-                return OMX_ErrorNone;
-            }
         }
         if (dev_use_buf(PORT_INDEX_IN) != true) {
             DEBUG_PRINT_ERROR("ERROR: in dev_use_buf");
@@ -4444,7 +4462,8 @@ OMX_ERRORTYPE  omx_video::component_role_enum(OMX_IN OMX_HANDLETYPE hComp,
             DEBUG_PRINT_ERROR("ERROR: No more roles");
             eRet = OMX_ErrorNoMore;
         }
-    } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc", OMX_MAX_STRINGNAME_SIZE)) {
+    } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc", OMX_MAX_STRINGNAME_SIZE) ||
+                !strncmp((char*)m_nkind, "OMX.qcom.video.encoder.heic", OMX_MAX_STRINGNAME_SIZE)) {
         if ((0 == index) && role) {
             strlcpy((char *)role, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
             DEBUG_PRINT_LOW("component_role_enum: role %s", role);
@@ -4811,10 +4830,10 @@ OMX_ERRORTYPE omx_video::fill_buffer_done(OMX_HANDLETYPE hComp,
             m_fbd_count++;
 
             if (dev_get_output_log_flag()) {
-                venc_start_buffer_access(m_pOutput_ion[index].data_fd);
+                do_cache_operations(m_pOutput_ion[index].data_fd);
                 dev_output_log_buffers((const char*)buffer->pBuffer + buffer->nOffset, buffer->nFilledLen,
                                         buffer->nTimeStamp);
-                venc_end_buffer_access(m_pOutput_ion[index].data_fd);
+                do_cache_operations(m_pOutput_ion[index].data_fd);
 
             }
         }
@@ -4934,7 +4953,7 @@ void omx_video::complete_pending_buffer_done_cbs()
     }
 }
 
-void omx_video::venc_start_buffer_access(int fd)
+void omx_video::do_cache_operations(int fd)
 {
 #ifdef USE_ION
     struct dma_buf_sync buf_sync;
@@ -4942,32 +4961,17 @@ void omx_video::venc_start_buffer_access(int fd)
     if (fd < 0)
         return;
 
-    buf_sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW;
-    int rc = ioctl(fd, DMA_BUF_IOCTL_SYNC, &buf_sync);
-    if (rc) {
-        DEBUG_PRINT_ERROR("Failed DMA_BUF_IOCTL_SYNC start fd : %d", fd);
+    struct dma_buf_sync dma_buf_sync_data[2];
+    dma_buf_sync_data[0].flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_RW;
+    dma_buf_sync_data[1].flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW;
+
+    for(unsigned int i=0; i<2; i++) {
+        int rc = ioctl(fd, DMA_BUF_IOCTL_SYNC, &dma_buf_sync_data[i]);
+        if (rc < 0) {
+            DEBUG_PRINT_ERROR("Failed DMA_BUF_IOCTL_SYNC %s fd : %d", i==0?"start":"end", fd);
+            return;
+        }
     }
-    return;
-#else
-    (void)fd;
-    return;
-#endif
-}
-
-void omx_video::venc_end_buffer_access(int fd)
-{
-#ifdef USE_ION
-    struct dma_buf_sync buf_sync;
-
-    if (fd < 0)
-        return;
-
-    buf_sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW;
-    int rc = ioctl(fd, DMA_BUF_IOCTL_SYNC, &buf_sync);
-    if (rc) {
-        DEBUG_PRINT_ERROR("Failed DMA_BUF_IOCTL_SYNC end fd: %d", fd);
-    }
-    return;
 #else
     (void)fd;
     return;
@@ -4980,7 +4984,7 @@ char *omx_video::ion_map(int fd, int len)
                                 MAP_SHARED, fd, 0);
 #ifdef USE_ION
     if (bufaddr != MAP_FAILED) {
-        venc_start_buffer_access(fd);
+        do_cache_operations(fd);
     }
 #endif
     return bufaddr;
@@ -4989,7 +4993,7 @@ char *omx_video::ion_map(int fd, int len)
 OMX_ERRORTYPE omx_video::ion_unmap(int fd, void *bufaddr, int len)
 {
 #ifdef USE_ION
-    venc_end_buffer_access(fd);
+    do_cache_operations(fd);
 #else
     (void)fd;
 #endif
@@ -5253,6 +5257,9 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
         bool interlaced = is_ubwc_interlaced(handle);
         int  full_range_flag = m_sConfigColorAspects.sAspects.mRange == ColorAspects::RangeFull ?
                                private_handle_t::PRIV_FLAGS_ITU_R_601_FR : 0;
+
+        if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingImageHEIC)
+            c2dDestFmt = NV12_512;
 
         if (c2dcc.getConversionNeeded() &&
             c2dcc.isPropChanged(m_sInPortDef.format.video.nFrameWidth,

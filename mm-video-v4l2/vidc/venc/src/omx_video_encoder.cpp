@@ -236,16 +236,18 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
         strlcpy((char *)m_cRole, "video_encoder.avc",OMX_MAX_STRINGNAME_SIZE);
         codec_type = OMX_VIDEO_CodingAVC;
         secure_session = true;
-    }
-    else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.vp8",    \
+    } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.vp8",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
         strlcpy((char *)m_cRole, "video_encoder.vp8",OMX_MAX_STRINGNAME_SIZE);
         codec_type = OMX_VIDEO_CodingVP8;
-    }
-    else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc",    \
+    } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
         strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
         codec_type = OMX_VIDEO_CodingHEVC;
+    } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.heic",    \
+                OMX_MAX_STRINGNAME_SIZE)) {
+        strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
+        codec_type = OMX_VIDEO_CodingImageHEIC;
     } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc.secure",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
         strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
@@ -394,6 +396,9 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     } else if (codec_type == OMX_VIDEO_CodingHEVC) {
         m_sParamProfileLevel.eProfile = (OMX_U32) OMX_VIDEO_HEVCProfileMain;
         m_sParamProfileLevel.eLevel = (OMX_U32) OMX_VIDEO_HEVCMainTierLevel1;
+    } else if (codec_type == OMX_VIDEO_CodingImageHEIC) {
+        m_sParamProfileLevel.eProfile = (OMX_U32) OMX_VIDEO_HEVCProfileMainStill;
+        m_sParamProfileLevel.eLevel = (OMX_U32) OMX_VIDEO_HEVCMainTierLevel1;
     }
 
     OMX_INIT_STRUCT(&m_sParamEntropy,  QOMX_VIDEO_H264ENTROPYCODINGTYPE);
@@ -443,6 +448,8 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
         m_sOutPortDef.format.video.eCompressionFormat =  OMX_VIDEO_CodingVP8;
     } else if (codec_type == OMX_VIDEO_CodingHEVC) {
         m_sOutPortDef.format.video.eCompressionFormat =  OMX_VIDEO_CodingHEVC;
+    } else if (codec_type == OMX_VIDEO_CodingImageHEIC) {
+        m_sOutPortDef.format.video.eCompressionFormat =  OMX_VIDEO_CodingImageHEIC;
     } else if (codec_type == (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME) {
         m_sOutPortDef.format.video.eCompressionFormat =  (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME;
     }
@@ -474,6 +481,8 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
         m_sOutPortFormat.eCompressionFormat =  OMX_VIDEO_CodingVP8;
     } else if (codec_type == OMX_VIDEO_CodingHEVC) {
         m_sOutPortFormat.eCompressionFormat =  OMX_VIDEO_CodingHEVC;
+    } else if (codec_type == OMX_VIDEO_CodingImageHEIC) {
+        m_sOutPortFormat.eCompressionFormat =  OMX_VIDEO_CodingImageHEIC;
     } else if (codec_type == (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME) {
         m_sOutPortFormat.eCompressionFormat =  (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME;
     }
@@ -536,6 +545,15 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sParamTME.eLevel = QOMX_VIDEO_TMELevelInteger;
     m_sParamTME.ePayloadVersion = tme_payload_version;
 
+    // HEIC specific init
+    OMX_INIT_STRUCT(&m_sParamAndroidImageGrid, OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE);
+    m_sParamAndroidImageGrid.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
+    m_sParamAndroidImageGrid.bEnabled = OMX_FALSE;
+    m_sParamAndroidImageGrid.nTileWidth = DEFAULT_TILE_DIMENSION;
+    m_sParamAndroidImageGrid.nTileHeight = DEFAULT_TILE_DIMENSION;
+    m_sParamAndroidImageGrid.nGridRows = DEFAULT_TILE_COUNT;
+    m_sParamAndroidImageGrid.nGridCols = DEFAULT_TILE_COUNT;
+
     OMX_INIT_STRUCT(&m_sParamLTRCount, QOMX_VIDEO_PARAM_LTRCOUNT_TYPE);
     m_sParamLTRCount.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
     m_sParamLTRCount.nCount = 0;
@@ -581,6 +599,9 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sParamColorSpaceConversion.bEnable = OMX_FALSE;
 
     OMX_INIT_STRUCT(&m_sBaseLayerID, OMX_SKYPE_VIDEO_CONFIG_BASELAYERPID);
+
+    OMX_INIT_STRUCT(&m_sParamLinearColorFormat, QOMX_ENABLETYPE);
+    m_sParamLinearColorFormat.bEnable = OMX_FALSE;
 
     m_state                   = OMX_StateLoaded;
     m_sExtraData = 0;
@@ -882,8 +903,11 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoAvc");
 
                 avc_param.nBFrames = 0;
+                avc_param.bEntropyCodingCABAC = (OMX_BOOL)(0);
+                avc_param.nCabacInitIdc = 0;
                 if ((pParam->eProfile == OMX_VIDEO_AVCProfileHigh)||
-                        (pParam->eProfile == OMX_VIDEO_AVCProfileMain)) {
+                    (pParam->eProfile == OMX_VIDEO_AVCProfileMain)||
+                    (pParam->eProfile == OMX_VIDEO_AVCProfileConstrainedHigh)) {
 
                     if (pParam->nBFrames) {
                         avc_param.nBFrames = pParam->nBFrames;
@@ -896,7 +920,7 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     avc_param.nCabacInitIdc = 0;
                 } else {
                     if (pParam->nBFrames) {
-                        DEBUG_PRINT_ERROR("Warning: B frames not supported");
+                        DEBUG_PRINT_HIGH("B frames not supported with profile %x", pParam->eProfile);
                     }
                 }
 
@@ -953,6 +977,19 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 m_sParamTME.ePayloadVersion = tme_payload_version;
                 break;
             }
+        case OMX_IndexParamVideoAndroidImageGrid:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE);
+                DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoAndroidImageGrid");
+                OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE* pParam =
+                    (OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE*)paramData;
+                if (!handle->venc_set_param(paramData, (OMX_INDEXTYPE)OMX_IndexParamVideoAndroidImageGrid)) {
+                    DEBUG_PRINT_ERROR("ERROR: Request for setting image grid enable failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sParamAndroidImageGrid, pParam, sizeof(m_sParamAndroidImageGrid));
+                break;
+            }
         case OMX_IndexParamVideoProfileLevelCurrent:
             {
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_PROFILELEVELTYPE);
@@ -987,6 +1024,8 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             m_sParamVP8.eLevel);
                 }
                 else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc",\
+                            OMX_MAX_STRINGNAME_SIZE) ||
+                        !strncmp((char*)m_nkind, "OMX.qcom.video.encoder.heic",\
                             OMX_MAX_STRINGNAME_SIZE)) {
                     m_sParamHEVC.eProfile = (OMX_VIDEO_HEVCPROFILETYPE)m_sParamProfileLevel.eProfile;
                     m_sParamHEVC.eLevel = (OMX_VIDEO_HEVCLEVELTYPE)m_sParamProfileLevel.eLevel;
@@ -1033,16 +1072,21 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                         DEBUG_PRINT_ERROR("ERROR: Setparameter: unknown Index %s", comp_role->cRole);
                         eRet =OMX_ErrorUnsupportedSetting;
                     }
-                }
-                else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc",OMX_MAX_STRINGNAME_SIZE)) {
+                } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc",OMX_MAX_STRINGNAME_SIZE)) {
                     if (!strncmp((const char*)comp_role->cRole,"video_encoder.hevc",OMX_MAX_STRINGNAME_SIZE)) {
                         strlcpy((char*)m_cRole,"video_encoder.hevc",OMX_MAX_STRINGNAME_SIZE);
                     } else {
                         DEBUG_PRINT_ERROR("ERROR: Setparameter: unknown Index %s", comp_role->cRole);
                         eRet = OMX_ErrorUnsupportedSetting;
                     }
-                }
-                else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.tme", OMX_MAX_STRINGNAME_SIZE)) {
+                } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.heic",OMX_MAX_STRINGNAME_SIZE)) {
+                    if (!strncmp((const char*)comp_role->cRole,"image_encoder.heic",OMX_MAX_STRINGNAME_SIZE)) {
+                        strlcpy((char*)m_cRole,"video_encoder.hevc",OMX_MAX_STRINGNAME_SIZE);
+                    } else {
+                        DEBUG_PRINT_ERROR("ERROR: Setparameter: unknown Index %s", comp_role->cRole);
+                        eRet = OMX_ErrorUnsupportedSetting;
+                    }
+                } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.tme", OMX_MAX_STRINGNAME_SIZE)) {
                     if (!strncmp((const char*)comp_role->cRole,"video_encoder.tme",OMX_MAX_STRINGNAME_SIZE)) {
                         strlcpy((char*)m_cRole,"video_encoder.tme",OMX_MAX_STRINGNAME_SIZE);
                     } else {
@@ -1102,15 +1146,15 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 AllocateNativeHandleParams* allocateNativeHandleParams = (AllocateNativeHandleParams *) paramData;
 
                 if (!secure_session) {
-                    DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle allowed only in secure session");
+                    DEBUG_PRINT_INFO("WARN: Enable/Disable allocate-native-handle allowed only in secure session");
                     eRet = OMX_ErrorUnsupportedSetting;
                     break;
                 } else if (allocateNativeHandleParams->nPortIndex != PORT_INDEX_OUT) {
-                    DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle allowed only on Output port!");
+                    DEBUG_PRINT_INFO("WARN: Enable/Disable allocate-native-handle allowed only on Output port!");
                     eRet = OMX_ErrorUnsupportedSetting;
                     break;
                 } else if (m_out_mem_ptr) {
-                    DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle is not allowed since Output port is not free !");
+                    DEBUG_PRINT_INFO("WARN: Enable/Disable allocate-native-handle is not allowed since Output port is not free !");
                     eRet = OMX_ErrorInvalidState;
                     break;
                 }
@@ -1276,11 +1320,11 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                         }
                     }
                 } else if (pParam->nPortIndex == PORT_INDEX_OUT && secure_session) {
-                            DEBUG_PRINT_ERROR("set_parameter: metamode is "
+                            DEBUG_PRINT_INFO("WARN: set_parameter: metamode is "
                             "valid for input port only in secure session");
                             return OMX_ErrorUnsupportedSetting;
                 } else {
-                    DEBUG_PRINT_ERROR("set_parameter: metamode is "
+                    DEBUG_PRINT_INFO("WARN: set_parameter: metamode is "
                             "valid for input port only");
                     eRet = OMX_ErrorUnsupportedIndex;
                 }
@@ -1692,10 +1736,32 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 VALIDATE_OMX_PARAM_DATA(paramData, QOMX_ENABLETYPE);
                 if (!handle->venc_set_param(paramData,
                             (OMX_INDEXTYPE)OMX_QTIIndexParamColorSpaceConversion)) {
-                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamLowLatencyMode failed");
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamColorSpaceConversion failed");
                     return OMX_ErrorUnsupportedSetting;
                 }
                 memcpy(&m_sParamColorSpaceConversion, paramData, sizeof(QOMX_ENABLETYPE));
+                break;
+            }
+        case OMX_QTIIndexParamEnableLinearColorFormat:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_ENABLETYPE);
+                if (!handle->venc_set_param(paramData,
+                            (OMX_INDEXTYPE)OMX_QTIIndexParamEnableLinearColorFormat)) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamEnableLinearColorFormat failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sParamLinearColorFormat, paramData, sizeof(QOMX_ENABLETYPE));
+                break;
+            }
+        case OMX_QTIIndexParamVideoEnableBlur:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_QTI_VIDEO_CONFIG_BLURINFO);
+                if (!handle->venc_set_param(paramData,
+                            (OMX_INDEXTYPE)OMX_QTIIndexParamVideoEnableBlur)) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamVideoEnableBlur failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_blurInfo, paramData, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
                 break;
             }
         case OMX_IndexParamVideoSliceFMO:
@@ -1714,7 +1780,7 @@ bool omx_venc::update_profile_level()
     OMX_U32 eProfile, eLevel;
 
     if (!handle->venc_get_profile_level(&eProfile,&eLevel)) {
-        DEBUG_PRINT_ERROR("Failed to update the profile_level");
+        DEBUG_PRINT_INFO("WARN: Failed to update the profile_level");
         return false;
     }
 
@@ -1742,6 +1808,8 @@ bool omx_venc::update_profile_level()
                 m_sParamVP8.eLevel);
     }
     else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc",\
+                OMX_MAX_STRINGNAME_SIZE) ||
+            !strncmp((char *)m_nkind, "OMX.qcom.video.encoder.heic",\
                 OMX_MAX_STRINGNAME_SIZE)) {
         m_sParamHEVC.eProfile = (OMX_VIDEO_HEVCPROFILETYPE)eProfile;
         m_sParamHEVC.eLevel = (OMX_VIDEO_HEVCLEVELTYPE)eLevel;
@@ -1934,10 +2002,6 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                     DEBUG_PRINT_ERROR("ERROR: un supported Rotation %u", (unsigned int)pParam->nRotation);
                     return OMX_ErrorUnsupportedSetting;
                 }
-                if (m_sConfigFrameRotation.nRotation == pParam->nRotation) {
-                    DEBUG_PRINT_HIGH("set_config: rotation (%d) not changed", pParam->nRotation);
-                    break;
-                }
 
                 if (handle->venc_set_config(configData,
                     OMX_IndexConfigCommonRotate) != true) {
@@ -1945,15 +2009,6 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                         return OMX_ErrorUnsupportedSetting;
                 }
                 m_sConfigFrameRotation.nRotation = pParam->nRotation;
-
-                // Update output-port resolution (since it might have been flipped by rotation)
-                if (handle->venc_get_dimensions(PORT_INDEX_OUT,
-                        &m_sOutPortDef.format.video.nFrameWidth,
-                        &m_sOutPortDef.format.video.nFrameHeight)) {
-                    DEBUG_PRINT_HIGH("set Rotation: updated dimensions = %u x %u",
-                            m_sOutPortDef.format.video.nFrameWidth,
-                            m_sOutPortDef.format.video.nFrameHeight);
-                }
                 break;
             }
         case OMX_QcomIndexConfigVideoFramePackingArrangement:
@@ -2140,7 +2195,7 @@ OMX_ERRORTYPE  omx_venc::set_config(OMX_IN OMX_HANDLETYPE      hComp,
                     DEBUG_PRINT_ERROR("Failed to set OMX_QTIIndexConfigVideoBlurResolution");
                     return OMX_ErrorUnsupportedSetting;
                 }
-                memcpy(&m_blurInfo, pParam, sizeof(m_blurInfo));
+                memcpy(&m_blurInfo, pParam, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
                 break;
            }
         case OMX_QcomIndexConfigH264Transform8x8:

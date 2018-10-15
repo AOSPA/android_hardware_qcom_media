@@ -116,6 +116,7 @@ extern "C" {
 #include "extra_data_handler.h"
 #include "ts_parser.h"
 #include "vidc_debug.h"
+#include "vidc_common.h"
 #include "vidc_vendor_extensions.h"
 #ifdef _ANDROID_
 #include <cutils/properties.h>
@@ -144,24 +145,6 @@ extern "C" {
         (unsigned)((OMX_BUFFERHEADERTYPE *)bufHdr)->pBuffer,\
         (unsigned)((OMX_BUFFERHEADERTYPE *)bufHdr)->nFilledLen,\
         (unsigned)((OMX_BUFFERHEADERTYPE *)bufHdr)->nTimeStamp)
-
-// BitMask Management logic
-#define BITS_PER_INDEX        64
-#define BITMASK_SIZE(mIndex) (((mIndex) + BITS_PER_INDEX - 1)/BITS_PER_INDEX)
-#define BITMASK_OFFSET(mIndex) ((mIndex)/BITS_PER_INDEX)
-#define BITMASK_FLAG(mIndex) ((uint64_t)1 << ((mIndex) % BITS_PER_INDEX))
-#define BITMASK_CLEAR(mArray,mIndex) (mArray)[BITMASK_OFFSET(mIndex)] \
-    &=  ~(BITMASK_FLAG(mIndex))
-#define BITMASK_SET(mArray,mIndex)  (mArray)[BITMASK_OFFSET(mIndex)] \
-    |=  BITMASK_FLAG(mIndex)
-#define BITMASK_PRESENT(mArray,mIndex) ((mArray)[BITMASK_OFFSET(mIndex)] \
-        & BITMASK_FLAG(mIndex))
-#define BITMASK_ABSENT(mArray,mIndex) (((mArray)[BITMASK_OFFSET(mIndex)] \
-            & BITMASK_FLAG(mIndex)) == 0x0)
-#define BITMASK_PRESENT(mArray,mIndex) ((mArray)[BITMASK_OFFSET(mIndex)] \
-        & BITMASK_FLAG(mIndex))
-#define BITMASK_ABSENT(mArray,mIndex) (((mArray)[BITMASK_OFFSET(mIndex)] \
-            & BITMASK_FLAG(mIndex)) == 0x0)
 
 #define OMX_CORE_CONTROL_CMDQ_SIZE   100
 #define OMX_CORE_QCIF_HEIGHT         144
@@ -986,8 +969,7 @@ class omx_vdec: public qc_omx_component
 #ifdef USE_ION
         bool alloc_map_ion_memory(OMX_U32 buffer_size, vdec_ion *ion_info, int flag);
         void free_ion_memory(struct vdec_ion *buf_ion_info);
-        void start_buffer_access(int fd);
-        void end_buffer_access(int fd);
+        void do_cache_operations(int fd);
 #endif
 
 
@@ -1322,13 +1304,6 @@ class omx_vdec: public qc_omx_component
 #endif
                 unsigned char *pmem_baseaddress[MAX_COUNT];
                 int pmem_fd[MAX_COUNT];
-                OMX_ERRORTYPE cache_ops(unsigned int index);
-                inline OMX_ERRORTYPE cache_clean_buffer(unsigned int index) {
-                    return cache_ops(index);
-                }
-                OMX_ERRORTYPE cache_clean_invalidate_buffer(unsigned int index) {
-                    return cache_ops(index);
-                }
         };
         allocate_color_convert_buf client_buffers;
         struct video_decoder_capability m_decoder_capability;

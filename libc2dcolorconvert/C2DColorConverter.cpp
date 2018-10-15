@@ -132,9 +132,11 @@ C2DColorConverter::~C2DColorConverter()
 
     if (mC2DLibHandle) {
         dlclose(mC2DLibHandle);
+        mC2DLibHandle = NULL;
     }
     if (mAdrenoUtilsHandle) {
         dlclose(mAdrenoUtilsHandle);
+        mAdrenoUtilsHandle = NULL;
     }
 
 }
@@ -301,6 +303,7 @@ bool C2DColorConverter::isYUVSurface(ColorConvertFormat format)
         case YCbCr420P:
         case YCrCb420P:
         case NV12_2K:
+        case NV12_512:
         case NV12_128m:
         case NV12_UBWC:
         case TP10_UBWC:
@@ -483,6 +486,7 @@ uint32_t C2DColorConverter::getC2DFormat(ColorConvertFormat format, bool isSourc
             return (C2D_COLOR_FORMAT_420_NV12 | C2D_FORMAT_MACROTILED);
         case YCbCr420SP:
         case NV12_2K:
+        case NV12_512:
         case NV12_128m:
             return C2D_COLOR_FORMAT_420_NV12;
         case YCbCr420P:
@@ -515,6 +519,8 @@ size_t C2DColorConverter::calcStride(ColorConvertFormat format, size_t width)
             return ALIGN(width, ALIGN16);
         case NV12_2K:
             return ALIGN(width, ALIGN16);
+        case NV12_512:
+            return ALIGN(width, ALIGN512);
         case NV12_128m:
             return ALIGN(width, ALIGN128);
         case YCbCr420P:
@@ -547,6 +553,8 @@ size_t C2DColorConverter::calcYSize(ColorConvertFormat format, size_t width, siz
             size_t lumaSize = ALIGN(alignedw * height, ALIGN2K);
             return lumaSize;
         }
+        case NV12_512:
+            return ALIGN(width, ALIGN512) * ALIGN(height, ALIGN512);
         case NV12_128m:
             return ALIGN(width, ALIGN128) * ALIGN(height, ALIGN32);
         case NV12_UBWC:
@@ -626,6 +634,11 @@ size_t C2DColorConverter::calcSize(ColorConvertFormat format, size_t width, size
             ALOGV("%s: NV12_2k, width = %zu, height = %zu, size = %d",
                                                    __FUNCTION__, width, height, size);
             }
+            break;
+        case NV12_512:
+            alignedw = ALIGN(width, ALIGN512);
+            alignedh = ALIGN(height, ALIGN512);
+            size = ALIGN(alignedw * alignedh + (alignedw * ALIGN(height/2, ALIGN256)), ALIGN4K);
             break;
         case NV12_128m:
             alignedw = ALIGN(width, ALIGN128);
@@ -740,6 +753,8 @@ size_t C2DColorConverter::calcLumaAlign(ColorConvertFormat format) {
     switch (format) {
         case NV12_2K:
           return ALIGN2K;
+        case NV12_512:
+          return ALIGN512;
         case NV12_128m:
           return 1;
         case NV12_UBWC:
@@ -759,6 +774,7 @@ size_t C2DColorConverter::calcSizeAlign(ColorConvertFormat format) {
         case YCbCr420SP: //OR NV12
         case YCbCr420P:
         case NV12_2K:
+        case NV12_512:
         case NV12_128m:
         case NV12_UBWC:
         case TP10_UBWC:
@@ -788,6 +804,7 @@ C2DBytesPerPixel C2DColorConverter::calcBytesPerPixel(ColorConvertFormat format)
         case YCrCb420P:
         case YCbCr420Tile:
         case NV12_2K:
+        case NV12_512:
         case NV12_128m:
         case NV12_UBWC:
         case TP10_UBWC:
