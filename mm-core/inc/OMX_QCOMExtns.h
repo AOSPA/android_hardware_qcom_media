@@ -139,6 +139,15 @@ struct OMX_QCOM_PARAM_MEMMAPENTRYTYPE
 #define OMX_QCOM_PORTDEFN_EXTN   "OMX.QCOM.index.param.portdefn"
 /* Allowed APIs on the above Index: OMX_GetParameter() and OMX_SetParameter() */
 
+/*
+ * VT Driver Version Number definition
+ * Hexa Decimal: 0xPPPPYYMM
+ *               PPPP [2 Bytes] - Product ID
+ *               YY   [1 Byte ] - Year (last two digits of year {00..99})
+ *               MM   [1 Byte ] - Month (01..12)
+ */
+#define VT_DRIVER_VERSION 0x1FD6120A
+
 typedef enum OMX_QCOMMemoryRegion
 {
     OMX_QCOM_MemRegionInvalid,
@@ -347,6 +356,7 @@ enum OMX_QCOM_VIDEO_CODINGTYPE
     QOMX_VIDEO_CodingMVC = 0x7FA30C07,
     QOMX_VIDEO_CodingVp9 = OMX_VIDEO_CodingVP9,   /**< keeping old enum for backwards compatibility*/
     QOMX_VIDEO_CodingTME = 0x7FA30C09,
+    QOMX_VIDEO_CodingImageHeic = OMX_VIDEO_CodingImageHEIC,
 };
 
 enum OMX_QCOM_EXTN_INDEXTYPE
