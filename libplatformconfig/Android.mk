@@ -25,8 +25,6 @@ LOCAL_SHARED_LIBRARIES += \
             libcutils \
             libutils
 
-LOCAL_STATIC_LIBRARIES := libOmxVidcCommon
-
 LOCAL_C_INCLUDES += \
             external/expat/lib \
             $(LOCAL_PATH)/../mm-core/inc \
