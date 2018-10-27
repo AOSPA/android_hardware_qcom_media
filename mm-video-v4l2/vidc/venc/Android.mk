@@ -112,6 +112,9 @@ LOCAL_SRC_FILES   := src/omx_video_base.cpp
 LOCAL_SRC_FILES   += src/omx_video_encoder.cpp
 LOCAL_SRC_FILES   += src/video_encoder_device_v4l2.cpp
 
+# Suppress warnings until they are fixed in video_encoder_device_v4l2.cpp
+LOCAL_CFLAGS += -Wno-error=implicit-fallthrough
+
 include $(BUILD_SHARED_LIBRARY)
 
 ifneq ($(call is-board-platform-in-list, $(TARGETS_THAT_DONT_NEED_SW_VENC_MPEG4)),true)
