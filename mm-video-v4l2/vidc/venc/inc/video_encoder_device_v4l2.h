@@ -405,6 +405,7 @@ class venc_dev
             struct ion_fd_data ion_alloc_fd;
 #endif
         };
+
         int nPframes_cache;
         int stopped;
         int resume_in_stopped;
@@ -591,6 +592,8 @@ class venc_dev
         BatchInfo mBatchInfo;
         bool mUseAVTimerTimestamps;
         bool venc_set_hdr_info(const MasteringDisplay&, const ContentLightLevel&);
+        bool mIsGridset;
+        OMX_U32 mTileDimension;
 };
 
 enum instance_state {
