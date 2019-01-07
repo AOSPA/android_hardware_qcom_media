@@ -25,6 +25,10 @@ WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
 OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 --------------------------------------------------------------------------*/
+#ifdef _USE_GLIB_
+#include <glib.h>
+#define strlcpy g_strlcpy
+#endif
 #include "omx_swvenc_mpeg4.h"
 
 /* def: StoreMetaDataInBuffersParams */
@@ -40,7 +44,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 /* use GraphicBuffer for rotation */
 #include <ui/GraphicBufferAllocator.h>
-#include <gralloc.h>
+#include <hardware/gralloc.h>
 
 /* def: GET_VT_TIMESTAMP */
 #include <qdMetaData.h>
@@ -61,6 +65,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define ALIGN(value,alignment) (((value) + (alignment-1)) & (~(alignment-1)))
 
 #define BUFFER_LOG_LOC "/data/vendor/media"
+int debug_level = PRIO_ERROR;
 
 /* factory function executed by the core to create instances */
 void *get_omx_component_factory_fn(void)
@@ -1970,9 +1975,13 @@ bool omx_venc::swvenc_do_rotate(int fd, SWVENC_IPBUFFER & ipbuffer, OMX_U32 inde
         DEBUG_PRINT_ERROR("failed to create private handle");
         return false;
     }
-
+#ifdef _LINUX_
+    sp<GraphicBuffer> srcBuffer = new GraphicBuffer(s_width, s_height, format, usage,
+            src_stride, (native_handle_t *)privateHandle, false);
+#else
     sp<GraphicBuffer> srcBuffer = new GraphicBuffer(s_width, s_height, format, 1, usage,
             src_stride, (native_handle_t *)privateHandle, false);
+#endif
     if (srcBuffer.get() == NULL) {
         DEBUG_PRINT_ERROR("create source buffer failed");
         swvenc_delete_pointer(privateHandle);

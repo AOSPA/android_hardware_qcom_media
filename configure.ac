@@ -107,6 +107,11 @@ AC_ARG_ENABLE([target-hypervisor],
 	[target_hypervisor="${enableval}"],
 	target_hypervisor=no)
 
+AC_ARG_ENABLE([build-swcodec],
+        AC_HELP_STRING([--enable-swcodec],
+                [Enable conditional compile for build software codec [default=no]]),
+        [build_swcodec="${enableval}"])
+
 AM_CONDITIONAL(TARGET_HYPERVISOR, test "x$target_hypervisor" = "xyes")
 
 AC_ARG_WITH([sanitized-headers],
@@ -209,6 +214,7 @@ AM_CONDITIONAL(BUILD_MM_VIDEO, [test "x$build_mm_video" = "xyes"])
 AM_CONDITIONAL(TARGET_USES_LIBGBM, [test "x$targets_use_libgbm" = "xyes"])
 AM_CONDITIONAL(TARGET_STEPPE, [test "x$target_sdmsteppe" = "xyes"])
 AM_CONDITIONAL(SKIP_VDEC_BUILD, [test "x$skip_vdec_build" = "xno"])
+AM_CONDITIONAL(BUILD_SWCODEC, [test "x$build_swcodec" = "xyes"])
 
 AC_ARG_WITH([glib],
       AC_HELP_STRING([--with-glib],
