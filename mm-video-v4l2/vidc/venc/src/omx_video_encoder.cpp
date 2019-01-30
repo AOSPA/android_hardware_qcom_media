@@ -1182,10 +1182,6 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     DEBUG_PRINT_HIGH("Enable/Disable allocate-native-handle allowed only in secure session");
                     eRet = OMX_ErrorUnsupportedSetting;
                     break;
-                } else if (allocateNativeHandleParams->nPortIndex != PORT_INDEX_OUT) {
-                    DEBUG_PRINT_HIGH("Enable/Disable allocate-native-handle allowed only on Output port!");
-                    eRet = OMX_ErrorUnsupportedSetting;
-                    break;
                 } else if (m_out_mem_ptr) {
                     DEBUG_PRINT_ERROR("Enable/Disable allocate-native-handle is not allowed since Output port is not free !");
                     eRet = OMX_ErrorInvalidState;
@@ -2787,7 +2783,11 @@ int omx_venc::async_message_process (void *context, void* message)
                         native_handle_t *nh = (native_handle_t *)(omxhdr->pBuffer);
                         nh->data[1] = m_sVenc_msg->buf.offset;
                         nh->data[2] = m_sVenc_msg->buf.len;
+#ifdef _HW_RGBA
+                        omxhdr->nFilledLen = sizeof(int) * 3 + sizeof(int) * (nh->numFds+nh->numInts);
+#else
                         omxhdr->nFilledLen = m_sVenc_msg->buf.len;
+#endif
                         omxhdr->nTimeStamp = m_sVenc_msg->buf.timestamp;
                         omxhdr->nFlags = m_sVenc_msg->buf.flags;
                     } else {
