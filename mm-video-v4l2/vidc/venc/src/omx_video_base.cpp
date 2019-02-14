@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2018, Linux Foundation. All rights reserved.
+Copyright (c) 2010-2019, Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -1094,9 +1094,9 @@ OMX_ERRORTYPE  omx_video::send_command_proxy(OMX_IN OMX_HANDLETYPE hComp,
     /*******************************/
     else if (m_state == OMX_StateInvalid) {
         /* State Transition from Inavlid to any state */
-        if (eState == OMX_StateLoaded || eState == OMX_StateWaitForResources ||
-            eState == OMX_StateIdle || eState == OMX_StateExecuting ||
-            eState == OMX_StatePause || eState == OMX_StateInvalid) {
+        if (OMX_StateLoaded == eState || OMX_StateWaitForResources == eState
+                || OMX_StateIdle == eState || OMX_StateExecuting == eState
+                || OMX_StatePause == eState || OMX_StateInvalid == eState) {
             DEBUG_PRINT_ERROR("ERROR: OMXCORE-SM: Invalid -->Loaded");
             post_event(OMX_EventError,OMX_ErrorInvalidState,\
                     OMX_COMPONENT_GENERATE_EVENT);
