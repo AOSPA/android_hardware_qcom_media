@@ -4282,7 +4282,12 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
 
                     fd = handle->fd;
                     plane[0].data_offset = 0;
+#ifdef _HW_RGBA
+                    plane[0].length = (m_sVenc_cfg.inputformat == V4L2_PIX_FMT_RGB32) ?
+                          VENUS_BUFFER_SIZE(COLOR_FMT_RGBA8888, handle->width, handle->height) : handle->size;
+#else
                     plane[0].length = handle->size;
+#endif
                     plane[0].bytesused = handle->size;
                     DEBUG_PRINT_LOW("venc_empty_buf: Opaque camera buf: fd = %d "
                                 ": filled %d of %d format 0x%lx", fd, plane[0].bytesused, plane[0].length, m_sVenc_cfg.inputformat);
@@ -4370,7 +4375,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
     buf.timestamp.tv_sec = bufhdr->nTimeStamp / 1000000;
     buf.timestamp.tv_usec = (bufhdr->nTimeStamp % 1000000);
 
-    if (!handle_input_extradata(buf)) {
+    if (plane[0].bytesused && !handle_input_extradata(buf)) {
         DEBUG_PRINT_ERROR("%s Failed to handle input extradata", __func__);
         return false;
     }
@@ -6134,6 +6139,9 @@ bool venc_dev::venc_set_color_format(OMX_COLOR_FORMATTYPE color_format)
             color_space = V4L2_COLORSPACE_470_SYSTEM_BG;
             break;
         case QOMX_COLOR_Format32bitRGBA8888:
+#ifdef _HW_RGBA
+        case QOMX_COLOR_FormatAndroidOpaque:
+#endif
             m_sVenc_cfg.inputformat = V4L2_PIX_FMT_RGB32;
             break;
         case QOMX_COLOR_Format32bitRGBA8888Compressed:
