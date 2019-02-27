@@ -341,7 +341,7 @@ class omx_video: public qc_omx_component
         virtual ~omx_video();  // destructor
 
         // virtual int async_message_process (void *context, void* message);
-        void process_event_cb(void *ctxt,unsigned char id);
+        void process_event_cb(void *ctxt);
 
         OMX_ERRORTYPE allocate_buffer(
                 OMX_HANDLETYPE hComp,
@@ -491,11 +491,9 @@ class omx_video: public qc_omx_component
                 OMX_PTR              appData,
                 void *               eglImage);
 
-
-
+        Signal signal;
         int  m_pipe_in;
         int  m_pipe_out;
-
         pthread_t msg_thread_id;
         pthread_t async_thread_id;
         bool async_thread_created;
@@ -833,6 +831,7 @@ class omx_video: public qc_omx_component
 
         uint64_t m_out_bm_count;
         uint64_t m_client_out_bm_count;
+        uint64_t m_client_in_bm_count;
         uint64_t m_inp_bm_count;
         uint64_t m_flags;
         uint64_t m_etb_count;
@@ -845,6 +844,7 @@ class omx_video: public qc_omx_component
         bool hw_overload;
         size_t m_graphicbuffer_size;
         char m_platform[OMX_MAX_STRINGNAME_SIZE];
+		bool m_buffer_freed;
 };
 
 #endif // __OMX_VIDEO_BASE_H__
