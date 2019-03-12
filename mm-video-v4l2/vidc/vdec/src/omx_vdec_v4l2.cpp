@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010 - 2018, The Linux Foundation. All rights reserved.
+Copyright (c) 2010 - 2019, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -362,45 +362,19 @@ void* async_message_thread (void *input)
 void* message_thread_dec(void *input)
 {
     omx_vdec* omx = reinterpret_cast<omx_vdec*>(input);
-    unsigned char id;
-    int n;
-
-    fd_set readFds;
     int res = 0;
-    struct timeval tv;
 
     DEBUG_PRINT_HIGH("omx_vdec: message thread start");
     prctl(PR_SET_NAME, (unsigned long)"VideoDecMsgThread", 0, 0, 0);
     while (!omx->message_thread_stop) {
-
-        tv.tv_sec = 2;
-        tv.tv_usec = 0;
-
-        FD_ZERO(&readFds);
-        FD_SET(omx->m_pipe_in, &readFds);
-
-        res = select(omx->m_pipe_in + 1, &readFds, NULL, NULL, &tv);
-        if (res < 0) {
-            DEBUG_PRINT_ERROR("select() ERROR: %s", strerror(errno));
+        res = omx->signal.wait(2 * 1000000000);
+        if (res == ETIMEDOUT || omx->message_thread_stop) {
             continue;
-        } else if (res == 0 /*timeout*/ || omx->message_thread_stop) {
-            continue;
-        }
-
-        n = read(omx->m_pipe_in, &id, 1);
-
-        if (0 == n) {
+        } else if (res) {
+            DEBUG_PRINT_ERROR("omx_vdec: message_thread_dec wait on condition failed, exiting");
             break;
         }
-
-        if (1 == n) {
-            omx->process_event_cb(omx, id);
-        }
-
-        if ((n < 0) && (errno != EINTR)) {
-            DEBUG_PRINT_LOW("ERROR: read from pipe failed, ret %d errno %d", n, errno);
-            break;
-        }
+        omx->process_event_cb(omx);
     }
     DEBUG_PRINT_HIGH("omx_vdec: message thread stop");
     return 0;
@@ -408,14 +382,8 @@ void* message_thread_dec(void *input)
 
 void post_message(omx_vdec *omx, unsigned char id)
 {
-    int ret_value;
-    DEBUG_PRINT_LOW("omx_vdec: post_message %d pipe out%d", id,omx->m_pipe_out);
-    ret_value = write(omx->m_pipe_out, &id, 1);
-    if (ret_value <= 0) {
-        DEBUG_PRINT_ERROR("post_message to pipe failed : %s", strerror(errno));
-    } else {
-        DEBUG_PRINT_LOW("post_message to pipe done %d",ret_value);
-    }
+    DEBUG_PRINT_LOW("omx_vdec: post_message %d", id);
+    omx->signal.signal();
 }
 
 // omx_cmd_queue destructor
@@ -678,8 +646,6 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     m_is_display_session(false),
     m_buffer_error(false)
 {
-    m_pipe_in = -1;
-    m_pipe_out = -1;
     m_poll_efd = -1;
     drv_ctx.video_driver_fd = -1;
     drv_ctx.extradata_info.ion.fd_ion_data.fd = -1;
@@ -972,10 +938,6 @@ omx_vdec::~omx_vdec()
         DEBUG_PRINT_HIGH("Waiting on OMX Msg Thread exit");
         pthread_join(msg_thread_id,NULL);
     }
-    close(m_pipe_in);
-    close(m_pipe_out);
-    m_pipe_in = -1;
-    m_pipe_out = -1;
     DEBUG_PRINT_HIGH("Waiting on OMX Async Thread exit");
     if(eventfd_write(m_poll_efd, 1)) {
          DEBUG_PRINT_ERROR("eventfd_write failed for fd: %d, errno = %d, force stop async_thread", m_poll_efd, errno);
@@ -1447,7 +1409,7 @@ int omx_vdec::decide_downscalar()
    None.
 
    ========================================================================== */
-void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
+void omx_vdec::process_event_cb(void *ctxt)
 {
     unsigned long p1; // Parameter - 1
     unsigned long p2; // Parameter - 2
@@ -1487,8 +1449,7 @@ void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
 
         /*process message if we have one*/
         if (qsize > 0) {
-            id = ident;
-            switch (id) {
+            switch (ident) {
                 case OMX_COMPONENT_GENERATE_EVENT:
                     if (pThis->m_cb.EventHandler) {
                         switch (p1) {
@@ -2807,20 +2768,13 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
             }
         }
 
-        if (pipe(fds)) {
-            DEBUG_PRINT_ERROR("pipe creation failed");
-            eRet = OMX_ErrorInsufficientResources;
-        } else {
-            m_pipe_in = fds[0];
-            m_pipe_out = fds[1];
-            msg_thread_created = true;
-            r = pthread_create(&msg_thread_id,0,message_thread_dec,this);
+        msg_thread_created = true;
+        r = pthread_create(&msg_thread_id,0,message_thread_dec,this);
 
-            if (r < 0) {
-                DEBUG_PRINT_ERROR("component_init(): message_thread_dec creation failed");
-                msg_thread_created = false;
-                eRet = OMX_ErrorInsufficientResources;
-            }
+        if (r < 0) {
+            DEBUG_PRINT_ERROR("component_init(): message_thread_dec creation failed");
+            msg_thread_created = false;
+            eRet = OMX_ErrorInsufficientResources;
         }
     }
 
@@ -10697,6 +10651,13 @@ OMX_ERRORTYPE omx_vdec::update_portdef(OMX_PARAM_PORTDEFINITIONTYPE *portDefn)
         return OMX_ErrorBadParameter;
     }
     DEBUG_PRINT_LOW("omx_vdec::update_portdef");
+    if (drv_ctx.frame_rate.fps_denominator > 0)
+        portDefn->format.video.xFramerate = (drv_ctx.frame_rate.fps_numerator /
+                   drv_ctx.frame_rate.fps_denominator) << 16; //Q16 format
+    else {
+        DEBUG_PRINT_ERROR("Error: Divide by zero");
+        return OMX_ErrorBadParameter;
+    }
     portDefn->nVersion.nVersion = OMX_SPEC_VERSION;
     portDefn->nSize = sizeof(OMX_PARAM_PORTDEFINITIONTYPE);
     portDefn->eDomain    = OMX_PortDomainVideo;
@@ -10708,9 +10669,6 @@ OMX_ERRORTYPE omx_vdec::update_portdef(OMX_PARAM_PORTDEFINITIONTYPE *portDefn)
         portDefn->nBufferSize        = drv_ctx.ip_buf.buffer_size;
         portDefn->format.video.eColorFormat = OMX_COLOR_FormatUnused;
         portDefn->format.video.eCompressionFormat = eCompressionFormat;
-        //for input port, always report the fps value set by client,
-        //to distinguish whether client got valid fps from parser.
-        portDefn->format.video.xFramerate = m_fps_received;
         portDefn->bEnabled   = m_inp_bEnabled;
         portDefn->bPopulated = m_inp_bPopulated;
 
@@ -10750,13 +10708,6 @@ OMX_ERRORTYPE omx_vdec::update_portdef(OMX_PARAM_PORTDEFINITIONTYPE *portDefn)
         portDefn->nBufferCountActual = drv_ctx.op_buf.actualcount;
         portDefn->nBufferCountMin    = drv_ctx.op_buf.mincount;
         portDefn->format.video.eCompressionFormat = OMX_VIDEO_CodingUnused;
-        if (drv_ctx.frame_rate.fps_denominator > 0)
-            portDefn->format.video.xFramerate = (drv_ctx.frame_rate.fps_numerator /
-                drv_ctx.frame_rate.fps_denominator) << 16; //Q16 format
-        else {
-            DEBUG_PRINT_ERROR("Error: Divide by zero");
-            return OMX_ErrorBadParameter;
-        }
         portDefn->bEnabled   = m_out_bEnabled;
         portDefn->bPopulated = m_out_bPopulated;
         if (!client_buffers.get_color_format(portDefn->format.video.eColorFormat)) {
