@@ -1,4 +1,4 @@
-CONFIG_PATH := hardware/qcom/media/conf_files/msmnile
+CONFIG_PATH := hardware/qcom/sm8150/media/conf_files/msmnile
 
 # Video feature flags
 
