@@ -70,7 +70,7 @@ libmm-vdec-inc      	+= $(QCOM_MEDIA_ROOT)/libarbitrarybytes/inc
 
 ifeq ($(PLATFORM_SDK_VERSION), 18)  #JB_MR2
 libmm-vdec-def += -DANDROID_JELLYBEAN_MR2=1
-libmm-vdec-inc += $(TOP)/hardware/qcom/media/libstagefrighthw
+libmm-vdec-inc += $(TOP)/hardware/qcom/sm8150/media/libstagefrighthw
 endif
 
 # Common Dependencies
