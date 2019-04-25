@@ -38,11 +38,29 @@ enum {
     HYP_PRIO_INFO  = 0x8
 };
 
-#if defined(_ANDROID_)
-
 #ifndef __FILENAME__
 #define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #endif
+
+#ifdef _LINUX_    // LV
+#include <syslog.h>
+#include <sys/syscall.h>
+
+#define gettid() syscall(SYS_gettid)
+#define getpid() syscall(SYS_getpid)
+#define DEBUG_PRINT_CTL(level, fmt, args...)   \
+         do {                             \
+              if (level <= debug_level)           \
+                syslog(level, "[%ld:%ld]:[%s:%s] " fmt " \n", getpid(), \
+                gettid(), __FILENAME__, __FUNCTION__, ##args); \
+         } while(0)
+
+#define HYP_VIDEO_MSG_INFO( msg_fmt,args...)   DEBUG_PRINT_CTL(LOG_DEBUG, msg_fmt, ##args )
+#define HYP_VIDEO_MSG_LOW( msg_fmt,args...)    DEBUG_PRINT_CTL(LOG_INFO, msg_fmt, ##args )
+#define HYP_VIDEO_MSG_HIGH( msg_fmt,args...)   DEBUG_PRINT_CTL(LOG_NOTICE, msg_fmt, ##args )
+#define HYP_VIDEO_MSG_ERROR( msg_fmt,args...)  DEBUG_PRINT_CTL(LOG_ERR, msg_fmt, ##args )
+
+#elif defined(_ANDROID_)
 
 #ifdef LOG_NDEBUG
 #undef LOG_NDEBUG
