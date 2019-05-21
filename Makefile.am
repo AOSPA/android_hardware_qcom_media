@@ -9,12 +9,12 @@ if !SKIP_VDEC_BUILD
 BUILD_COMPONENTS += libc2dcolorconvert libarbitrarybytes
 endif
 
-if BUILD_MM_VIDEO
-BUILD_COMPONENTS += mm-video-v4l2
-endif
-
 if TARGET_HYPERVISOR
 BUILD_COMPONENTS += hypv-intercept
+endif
+
+if BUILD_MM_VIDEO
+BUILD_COMPONENTS += mm-video-v4l2
 endif
 
 SUBDIRS := $(BUILD_COMPONENTS)
