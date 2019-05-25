@@ -1302,6 +1302,9 @@ bool venc_dev::venc_get_supported_color_format(unsigned index, OMX_U32 *colorFor
     //index 4 - Venus flavour of RGBA8888
     //index 5 - opaque which internally maps to YUV420SP.
     //index 6 - vannilla YUV420SP
+    //index 7 - opaque color format for Android
+    //index 8 - NV12
+    //index 9 - NV12 (512 alignment)
     //this can be extended in the future
     int supportedFormats[] = {
         [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed,
@@ -1313,18 +1316,22 @@ bool venc_dev::venc_get_supported_color_format(unsigned index, OMX_U32 *colorFor
         [6] = QOMX_COLOR_Format32bitRGBA8888,
         [7] = QOMX_COLOR_FormatAndroidOpaque,
         [8] = OMX_COLOR_FormatYUV420SemiPlanar,
+        [9] = QOMX_COLOR_FormatYUV420PackedSemiPlanar512m,
     };
 #else
     //we support two formats
     //index 0 - Venus flavour of YUV420SP
     //index 1 - opaque which internally maps to YUV420SP.
     //index 2 - vannilla YUV420SP
+    //index 3 - NV12
+    //index 4 - NV12 (512 alignment)
     //this can be extended in the future
     int supportedFormats[] = {
         [0] = QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m,
         [1] = QOMX_COLOR_FormatYVU420SemiPlanar,
         [2] = QOMX_COLOR_FormatAndroidOpaque,
         [3] = OMX_COLOR_FormatYUV420SemiPlanar,
+        [4] = QOMX_COLOR_FormatYUV420PackedSemiPlanar512m,
     };
 #endif
     if (index > (sizeof(supportedFormats)/sizeof(*supportedFormats) - 1))

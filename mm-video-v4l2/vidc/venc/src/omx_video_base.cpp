@@ -1475,10 +1475,11 @@ bool omx_video::post_event(unsigned long p1,
         m_cmd_q.insert_entry(p1,p2,id);
     }
 
+    pthread_mutex_unlock(&m_lock);
+
     bRet = true;
     DEBUG_PRINT_LOW("Value of this pointer in post_event %p",this);
     post_message(this, id);
-    pthread_mutex_unlock(&m_lock);
 
     return bRet;
 }
