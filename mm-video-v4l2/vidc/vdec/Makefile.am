@@ -65,10 +65,6 @@ AM_CPPFLAGS += -I$(top_srcdir)/libarbitrarybytes/inc/
 AM_CPPFLAGS += -I$(top_srcdir)/mm-core/inc/
 AM_CPPFLAGS += -I$(top_srcdir)/mm-core/src/common/
 
-AM_CPPFLAGS += -I$(WORKSPACE)/graphics/libdrm/freedreno/kgsl/
-AM_CPPFLAGS += -I$(WORKSPACE)/display/display-hal/gralloc/
-AM_CPPFLAGS += -I$(WORKSPACE)/hardware/libhardware/include/
-AM_CPPFLAGS += -I${WORKSPACE}/frameworks/native/include/
 c_sources = src/ts_parser.cpp
 c_sources += src/omx_vdec_v4l2.cpp
 c_sources += $(top_srcdir)/mm-video-v4l2/vidc/common/src/vidc_common.cpp
