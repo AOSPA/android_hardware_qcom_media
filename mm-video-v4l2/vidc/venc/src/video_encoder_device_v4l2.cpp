@@ -1418,6 +1418,7 @@ bool venc_dev::venc_get_output_log_flag()
 
 int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len, uint64_t timestamp)
 {
+    int offset =0;
     if (venc_handle->is_secure_session()) {
         DEBUG_PRINT_ERROR("logging secure output buffers is not allowed!");
         return -1;
@@ -1452,7 +1453,7 @@ int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len, u
         if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
             int fps = m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den;
             IvfFileHeader ivfFileHeader(false, m_sVenc_cfg.input_width,
-                                        m_sVenc_cfg.input_height, fps, 1, 0);
+                                        m_sVenc_cfg.input_height, 1000000, 1, 0);
             fwrite(&ivfFileHeader, sizeof(ivfFileHeader), 1, m_debug.outfile);
         }
     }
@@ -1460,9 +1461,10 @@ int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len, u
         if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
             IvfFrameHeader ivfFrameHeader(buffer_len, timestamp);
             fwrite(&ivfFrameHeader, sizeof(ivfFrameHeader), 1, m_debug.outfile);
+            offset = sizeof(ivfFrameHeader);
         }
         DEBUG_PRINT_LOW("%s buffer_len:%d", __func__, buffer_len);
-        fwrite(buffer_addr, buffer_len, 1, m_debug.outfile);
+        fwrite(buffer_addr + offset, buffer_len, 1, m_debug.outfile);
     }
     return 0;
 }

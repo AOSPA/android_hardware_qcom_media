@@ -47,7 +47,12 @@
 
 #include "omx_swvdec_utils.h"
 
-#define OMX_SWVDEC_LOGLEVEL_DEFAULT 3 ///< default OMX SwVdec loglevel
+#define OMX_SWVDEC_LOGLEVEL_DEFAULT 1 ///< default OMX SwVdec loglevel
+
+#ifdef _USE_GLIB_
+#include <glib.h>
+#define strlcpy g_strlcpy
+#endif
 
 unsigned int g_omx_swvdec_logmask = OMX_SWVDEC_LOGLEVEL_DEFAULT;
                               ///< global OMX SwVdec logmask variable definition

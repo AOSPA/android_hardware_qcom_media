@@ -22,13 +22,13 @@ AM_CPPFLAGS += -Wno-parentheses
 AM_CPPFLAGS += -D_ANDROID_ICS_
 AM_CPPFLAGS += -DPROCESS_EXTRADATA_IN_OUTPUT_PORT
 AM_CPPFLAGS += -DNATIVE_BASE_DISABLE
+AM_CPPFLAGS += -D__LINUX__
 
 if TARGET_HYPERVISOR
 AM_CPPFLAGS += -DHYPERVISOR
 AM_CPPFLAGS += -I$(top_srcdir)/hypv-intercept/
 endif
 #AM_CPPFLAGS += "-include stdint.h"
-AM_CPPFLAGS += "-Dstrlcpy=g_strlcpy"
 AM_CPPFLAGS += "-Dstrlcat=g_strlcat"
 AM_CPPFLAGS += "-std=c++11"
 AM_CPPFLAGS += "-DHAVE_ANDROID_OS"
@@ -51,6 +51,9 @@ endif
 
 if TARGET_USES_GBM
 AM_CPPFLAGS += -DUSE_GBM
+endif
+if TARGET_OUTPUT_DEINTERLACED
+AM_CPPFLAGS += -D_OUTPUT_DEINTERLACED_
 endif
 
 if MASTER_SIDE_CP_TARGET_LIST
@@ -81,4 +84,17 @@ libOmxVdec_la_LDFLAGS += -lc2dcolorconvert -lplatformconfig -larbitrarybytes
 if TARGET_HYPERVISOR
 libOmxVdec_la_LDFLAGS += -L$(top_builddir)/hypv-intercept
 libOmxVdec_la_LDFLAGS += -lhypv_intercept
+endif
+
+if BUILD_SWCODEC
+lib_LTLIBRARIES += libOmxSwVdec.la
+c1_sources = src/omx_swvdec.cpp
+c1_sources += src/omx_swvdec_utils.cpp
+
+libOmxSwVdec_la_SOURCES = $(c1_sources)
+libOmxSwVdec_la_CFLAGS = $(AM_CFLAGS) $(AM_CPPFLAGS) -fPIC
+libOmxSwVdec_la_LDFLAGS = -module -shared -avoid-version
+libOmxSwVdec_la_LDFLAGS += -llog  -lcutils -lglib-2.0 -lion -lqdMetaData -lswvdec
+libOmxSwVdec_la_LDFLAGS += -L$(top_builddir)/libc2dcolorconvert
+libOmxSwVdec_la_LDFLAGS += -lc2dcolorconvert
 endif

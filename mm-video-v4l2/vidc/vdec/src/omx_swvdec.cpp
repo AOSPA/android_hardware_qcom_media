@@ -38,11 +38,14 @@
 
 #include <assert.h>
 #include <fcntl.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
-
 #include <cutils/properties.h>
 
 #include <media/hardware/HardwareAPI.h>
+#ifdef USE_GBM
+#include <media/msm_media_info.h>
+#endif
 #include <gralloc_priv.h>
 
 #include "OMX_QCOMExtns.h"
@@ -50,6 +53,15 @@
 #include "omx_swvdec.h"
 
 #include "swvdec_api.h"
+
+#ifdef _USE_GLIB_
+#include <glib.h>
+#define strlcpy g_strlcpy
+#endif
+#define  SWDEC_BUFFER_OP_COUNT_MIN 4
+#ifndef MAX3
+#define MAX3(a, b, c)       MAX(MAX(a, b), c)
+#endif /* !MAX3 */
 
 static unsigned int split_buffer_mpeg4(unsigned int         *offset_array,
                                        OMX_BUFFERHEADERTYPE *p_buffer_hdr);
@@ -91,6 +103,12 @@ omx_swvdec::omx_swvdec():
     m_dimensions_update_inprogress(false),
     m_buffer_array_ip(NULL),
     m_buffer_array_op(NULL),
+#ifdef USE_GBM
+    m_platform_list(NULL),
+    m_platform_entry(NULL),
+    m_pmem_info(NULL),
+    m_gbm_device_fd(-1),
+#endif
     m_meta_buffer_array(NULL)
 {
     // memset all member variables that are composite structures
@@ -323,6 +341,7 @@ OMX_ERRORTYPE omx_swvdec::component_init(OMX_STRING cmp_name)
 
 component_init_exit:
     return retval;
+
 }
 
 /**
@@ -2628,9 +2647,12 @@ OMX_ERRORTYPE omx_swvdec::set_frame_attributes(
                          m_frame_attributes.scanlines);
 
         plane_size_uv = m_frame_attributes.stride * scanlines_uv;
-
+#ifdef USE_GBM
+        /*gmb allocator will use  VENUS_BUFFER_SIZE to calculate frame buffer size*/
+        m_frame_attributes.size = VENUS_BUFFER_SIZE(COLOR_FMT_NV12, width, height);
+#else
         m_frame_attributes.size = ALIGN(plane_size_y + plane_size_uv, 4096);
-
+#endif
         OMX_SWVDEC_LOG_HIGH("'OMX_QCOM_COLOR_FormatYUV420PackedSemiPlanar32m': "
                             "stride %d, scanlines %d, size %d",
                             m_frame_attributes.stride,
@@ -3566,7 +3588,8 @@ OMX_ERRORTYPE omx_swvdec::get_buffer_requirements_swvdec(
 
         m_port_op.def.nBufferSize        = p_buffer_req->size;
         m_port_op.def.nBufferCountMin    = p_buffer_req->mincount;
-        m_port_op.def.nBufferCountActual = MAX(p_buffer_req->mincount,
+        m_port_op.def.nBufferCountActual = MAX3(p_buffer_req->mincount,
+                                               SWDEC_BUFFER_OP_COUNT_MIN,
                                                m_port_op.def.nBufferCountActual);
         m_port_op.def.nBufferAlignment   = p_buffer_req->alignment;
 
@@ -3793,7 +3816,22 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op(
         OMX_SWVDEC_LOG_HIGH("op buffer %d: %d bytes being allocated",
                             ii,
                             size);
+#ifdef USE_GBM
+        int pmeta_fd = -1;
+        bool ret =
+            gbm_memory_alloc_map(m_frame_dimensions.width,
+                                 m_frame_dimensions.height,
+                                 m_gbm_device_fd,
+                                 &m_buffer_array_op[ii].gbm_info,size,
+                                 m_port_op.def.nBufferAlignment);
+        if (ret != TRUE)
+        {
+            return OMX_ErrorInsufficientResources;
+        }
 
+        pmem_fd = m_buffer_array_op[ii].gbm_info.bo_fd;
+        pmeta_fd = m_buffer_array_op[ii].gbm_info.meta_fd;
+#else
         m_buffer_array_op[ii].ion_info.dev_fd=
             ion_memory_alloc_map(&m_buffer_array_op[ii].ion_info,size,
                                  m_port_op.def.nBufferAlignment);
@@ -3804,7 +3842,7 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op(
         }
 
         pmem_fd = m_buffer_array_op[ii].ion_info.data_fd;
-
+#endif
         bufferaddr = ion_map(pmem_fd,size);
 
         if (bufferaddr == MAP_FAILED)
@@ -3812,10 +3850,12 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op(
             OMX_SWVDEC_LOG_ERROR("mmap() failed for fd %d of size %d",
                                  pmem_fd,
                                  size);
-
+#ifdef USE_GBM
+            gbm_memory_free(&m_buffer_array_op[ii].gbm_info);
+#else
             close(pmem_fd);
             ion_memory_free(&m_buffer_array_op[ii].ion_info);
-
+#endif
             return OMX_ErrorInsufficientResources;
         }
 
@@ -3835,6 +3875,14 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op(
         m_buffer_array_op[ii].buffer_populated = true;
 
         m_buffer_array_op[ii].buffer_swvdec.fd            = pmem_fd ;
+#ifdef USE_GBM
+        m_pmem_info[ii].pmeta_fd = pmeta_fd;
+        m_pmem_info[ii].pmem_fd = pmem_fd;
+        m_pmem_info[ii].size = m_buffer_array_op[ii].buffer_payload.buffer_len;
+        m_pmem_info[ii].mapped_size = m_buffer_array_op[ii].buffer_payload.mmaped_size;
+        m_pmem_info[ii].buffer = m_buffer_array_op[ii].buffer_swvdec.p_buffer;
+        m_pmem_info[ii].offset = m_buffer_array_op[ii].buffer_payload.offset;
+#endif
 
         if(m_swvdec_codec == SWVDEC_CODEC_VC1)
         {
@@ -3887,9 +3935,7 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_ip_info_array()
     OMX_ERRORTYPE retval = OMX_ErrorNone;
 
     unsigned int ii;
-
     OMX_BUFFERHEADERTYPE *p_buffer_hdr;
-
     if (m_buffer_array_ip != NULL)
     {
         OMX_SWVDEC_LOG_ERROR("buffer info array already allocated");
@@ -3950,9 +3996,16 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op_info_array()
     OMX_ERRORTYPE retval = OMX_ErrorNone;
 
     unsigned int ii;
-
+#ifdef USE_GBM
+   char *pPtr;
+   int nPlatformEntrySize = 0;
+   int nPlatformListSize  = 0;
+   int nPMEMInfoSize = 0;
+   OMX_QCOM_PLATFORM_PRIVATE_LIST      *pPlatformList;
+   OMX_QCOM_PLATFORM_PRIVATE_ENTRY     *pPlatformEntry;
+   OMX_QCOM_PLATFORM_PRIVATE_PMEM_INFO *pPMEMInfo;
+#endif
     OMX_BUFFERHEADERTYPE *p_buffer_hdr;
-
     if (m_buffer_array_op != NULL)
     {
         OMX_SWVDEC_LOG_ERROR("buffer info array already allocated");
@@ -3960,7 +4013,6 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op_info_array()
         retval = OMX_ErrorInsufficientResources;
         goto buffer_allocate_op_info_array_exit;
     }
-
     OMX_SWVDEC_LOG_HIGH("allocating buffer info array, %d element%s",
                         m_port_op.def.nBufferCountActual,
                         (m_port_op.def.nBufferCountActual > 1) ? "s" : "");
@@ -3968,7 +4020,6 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op_info_array()
     m_buffer_array_op =
         (OMX_SWVDEC_BUFFER_INFO *) calloc(sizeof(OMX_SWVDEC_BUFFER_INFO),
                                           m_port_op.def.nBufferCountActual);
-
     if (m_buffer_array_op == NULL)
     {
         OMX_SWVDEC_LOG_ERROR("failed to allocate buffer info array; "
@@ -3977,11 +4028,35 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op_info_array()
                              (m_port_op.def.nBufferCountActual > 1) ? "s" : "",
                              sizeof(OMX_SWVDEC_BUFFER_INFO) *
                              m_port_op.def.nBufferCountActual);
-
         retval = OMX_ErrorInsufficientResources;
         goto buffer_allocate_op_info_array_exit;
     }
+#ifdef USE_GBM
+    m_gbm_device_fd = open("/dev/dri/renderD128", O_RDWR | O_CLOEXEC);
+    if (m_gbm_device_fd < 0) {
+       OMX_SWVDEC_LOG_ERROR("opening dri device for gbm failed with fd = %d", m_gbm_device_fd);
+      retval = OMX_ErrorInsufficientResources;
+      goto buffer_allocate_op_info_array_exit;
+    }
+    nPMEMInfoSize      = m_port_op.def.nBufferCountActual *
+        sizeof(OMX_QCOM_PLATFORM_PRIVATE_PMEM_INFO);
 
+    nPlatformListSize  = m_port_op.def.nBufferCountActual *
+        sizeof(OMX_QCOM_PLATFORM_PRIVATE_LIST);
+    nPlatformEntrySize = m_port_op.def.nBufferCountActual *
+        sizeof(OMX_QCOM_PLATFORM_PRIVATE_ENTRY);
+    // Alloc mem for platform specific info
+    pPtr = (char*) calloc(nPlatformListSize + nPlatformEntrySize +
+            nPMEMInfoSize,1);
+    m_platform_list = (OMX_QCOM_PLATFORM_PRIVATE_LIST *)(pPtr);
+    m_platform_entry= (OMX_QCOM_PLATFORM_PRIVATE_ENTRY *)
+        (((char *) m_platform_list)  + nPlatformListSize);
+    m_pmem_info     = (OMX_QCOM_PLATFORM_PRIVATE_PMEM_INFO *)
+        (((char *) m_platform_entry) + nPlatformEntrySize);
+    pPlatformList   = m_platform_list;
+    pPlatformEntry  = m_platform_entry;
+    pPMEMInfo       = m_pmem_info;
+#endif
     for (ii = 0; ii < m_port_op.def.nBufferCountActual; ii++)
     {
         p_buffer_hdr = &m_buffer_array_op[ii].buffer_header;
@@ -3993,12 +4068,31 @@ OMX_ERRORTYPE omx_swvdec::buffer_allocate_op_info_array()
 
         m_buffer_array_op[ii].buffer_swvdec.p_client_data =
             (void *) ((unsigned long) ii);
-
+#ifdef USE_GBM
+        // Platform specific PMEM Information
+        // Initialize the Platform Entry
+        //DEBUG_PRINT_LOW("Initializing the Platform Entry for %d",i);
+        pPlatformEntry->type       = OMX_QCOM_PLATFORM_PRIVATE_PMEM;
+        pPlatformEntry->entry      = pPMEMInfo;
+        // Initialize the Platform List
+        pPlatformList->nEntries    = 1;
+        pPlatformList->entryList   = pPlatformEntry;
+        pPMEMInfo->offset = 0;
+        pPMEMInfo->pmem_fd = -1;
+        pPMEMInfo->pmeta_fd = -1;
+        m_buffer_array_op[ii].gbm_info.bo_fd = -1;
+        p_buffer_hdr->pPlatformPrivate = pPlatformList;
+#endif
         p_buffer_hdr->nSize              = sizeof(OMX_BUFFERHEADERTYPE);
         p_buffer_hdr->nVersion.nVersion  = OMX_SPEC_VERSION;
         p_buffer_hdr->nOutputPortIndex   = OMX_CORE_PORT_INDEX_OP;
         p_buffer_hdr->pOutputPortPrivate =
             (void *) &(m_buffer_array_op[ii].buffer_payload);
+#ifdef USE_GBM
+        pPMEMInfo++;
+        pPlatformEntry++;
+        pPlatformList++;
+#endif
     }
 
 buffer_allocate_op_info_array_exit:
@@ -4374,12 +4468,16 @@ OMX_ERRORTYPE omx_swvdec::buffer_deallocate_op(
             ion_unmap(m_buffer_array_op[ii].buffer_payload.pmem_fd,
                       m_buffer_array_op[ii].buffer_payload.bufferaddr,
                       m_buffer_array_op[ii].buffer_payload.mmaped_size);
-
+#ifdef USE_GBM
+            gbm_memory_free(&m_buffer_array_op[ii].gbm_info);
+            m_buffer_array_op[ii].buffer_payload.pmem_fd = -1;
+#else
             close(m_buffer_array_op[ii].buffer_payload.pmem_fd);
 
             m_buffer_array_op[ii].buffer_payload.pmem_fd = -1;
 
             ion_memory_free(&m_buffer_array_op[ii].ion_info);
+#endif
         }
 
         m_buffer_array_op[ii].buffer_populated = false;
@@ -4435,6 +4533,18 @@ void omx_swvdec::buffer_deallocate_ip_info_array()
 void omx_swvdec::buffer_deallocate_op_info_array()
 {
     assert(m_buffer_array_op != NULL);
+
+
+#ifdef USE_GBM
+    if(m_gbm_device_fd > 0) {
+      close(m_gbm_device_fd);
+      m_gbm_device_fd = -1;
+    }
+    if (m_platform_list) {
+        free(m_platform_list);
+        m_platform_list = NULL;
+    }
+#endif
 
     free(m_buffer_array_op);
 
@@ -4732,6 +4842,84 @@ OMX_ERRORTYPE omx_swvdec::flush(unsigned int port_index)
     return retval;
 }
 
+#ifdef USE_GBM
+int omx_swvdec::gbm_memory_alloc_map(OMX_U32 w,OMX_U32 h,int dev_fd,
+                 struct vdec_gbm *op_buf_gbm_info, OMX_U32 size,int flag)
+{
+
+    OMX_U32 flags = GBM_BO_USE_SCANOUT | GBM_BO_USE_RENDERING;
+    struct gbm_device *gbm = NULL;
+    struct gbm_bo *bo = NULL;
+    int bo_fd = -1, meta_fd = -1;
+    if (!op_buf_gbm_info || dev_fd < 0 ) {
+        OMX_SWVDEC_LOG_ERROR("Invalid arguments to alloc_map_ion_memory");
+        goto gbm_memory_alloc_map_exit;
+    }
+
+    gbm = gbm_create_device(dev_fd);
+    if (gbm == NULL) {
+       OMX_SWVDEC_LOG_ERROR("create gbm device failed");
+       goto gbm_memory_alloc_map_exit;
+    } else {
+       OMX_SWVDEC_LOG_HIGH( "Successfully created gbm device");
+    }
+    OMX_SWVDEC_LOG_HIGH("create NV12 gbm_bo with width=%d, height=%d", w, h);
+    bo = gbm_bo_create(gbm, w, h,GBM_FORMAT_NV12,
+              flags);
+
+    if (bo == NULL) {
+      OMX_SWVDEC_LOG_ERROR("Create bo failed");
+      gbm_device_destroy(gbm);
+      goto gbm_memory_alloc_map_exit;
+    }
+
+    bo_fd = gbm_bo_get_fd(bo);
+    if (bo_fd < 0) {
+      OMX_SWVDEC_LOG_ERROR("Get bo fd failed");
+      gbm_bo_destroy(bo);
+      gbm_device_destroy(gbm);
+      goto gbm_memory_alloc_map_exit;
+    }
+
+    gbm_perform(GBM_PERFORM_GET_METADATA_ION_FD, bo, &meta_fd);
+    if (meta_fd < 0) {
+      OMX_SWVDEC_LOG_ERROR("Get bo meta fd failed");
+      gbm_bo_destroy(bo);
+      gbm_device_destroy(gbm);
+      goto gbm_memory_alloc_map_exit;
+    }
+    op_buf_gbm_info->gbm = gbm;
+    op_buf_gbm_info->bo = bo;
+    op_buf_gbm_info->bo_fd = bo_fd;
+    op_buf_gbm_info->meta_fd = meta_fd;
+
+    OMX_SWVDEC_LOG_ERROR("allocate gbm bo fd meta fd  %p %d %d",bo,bo_fd,meta_fd);
+    return TRUE;
+gbm_memory_alloc_map_exit:
+    return FALSE;
+}
+
+void omx_swvdec::gbm_memory_free(struct vdec_gbm *buf_gbm_info)
+{
+    if(!buf_gbm_info) {
+      OMX_SWVDEC_LOG_ERROR(" GBM: free called with invalid fd/allocdata");
+      return;
+    }
+    OMX_SWVDEC_LOG_ERROR("free gbm bo fd meta fd  %p %d %d",
+           buf_gbm_info->bo,buf_gbm_info->bo_fd,buf_gbm_info->meta_fd);
+
+    if (buf_gbm_info->bo)
+       gbm_bo_destroy(buf_gbm_info->bo);
+    buf_gbm_info->bo = NULL;
+
+    if (buf_gbm_info->gbm)
+       gbm_device_destroy(buf_gbm_info->gbm);
+    buf_gbm_info->gbm = NULL;
+
+    buf_gbm_info->bo_fd = -1;
+    buf_gbm_info->meta_fd = -1;
+}
+#endif
 /**
  * @brief Allocate & map ION memory.
  */
