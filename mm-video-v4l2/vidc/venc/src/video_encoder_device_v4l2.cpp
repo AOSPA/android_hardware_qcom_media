@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2019, The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -35,6 +35,9 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "video_encoder_device_v4l2.h"
 #include "omx_video_encoder.h"
 #include "media/msm_vidc_utils.h"
+#ifdef HYPERVISOR
+#include "hypv_intercept.h"
+#endif
 #ifdef USE_ION
 #include <linux/msm_ion.h>
 #endif
@@ -63,6 +66,11 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <utils/Trace.h>
 
 #define YUV_STATS_LIBRARY_NAME "libgpustats.so" // UBWC case: use GPU library
+
+#ifdef HYPERVISOR
+#define ioctl(x, y, z) hypv_ioctl(x, y, z)
+#define poll(x, y, z)  hypv_poll(x, y, z)
+#endif
 
 #undef ALIGN
 #define ALIGN(x, to_align) ((((unsigned long) x) + (to_align - 1)) & ~(to_align - 1))
@@ -1646,7 +1654,13 @@ bool venc_dev::venc_open(OMX_U32 codec)
         device_name = (OMX_STRING)"/dev/video/q6_enc";
         supported_rc_modes = (RC_ALL & ~RC_CBR_CFR);
     }
-    m_nDriver_fd = open (device_name, O_RDWR);
+
+#ifdef HYPERVISOR
+    m_nDriver_fd = hypv_open(device_name, O_RDWR);
+#else
+    m_nDriver_fd = open(device_name, O_RDWR);
+#endif
+
     if ((int)m_nDriver_fd < 0) {
         DEBUG_PRINT_ERROR("ERROR: Omx_venc::Comp Init Returning failure");
         return false;
@@ -1689,15 +1703,10 @@ bool venc_dev::venc_open(OMX_U32 codec)
         idrperiod.idrperiod = 1;
         minqp = 0;
         maxqp = 51;
-        if (codec == OMX_VIDEO_CodingImageHEIC) {
-            m_sVenc_cfg.input_width = DEFAULT_TILE_DIMENSION;
-            m_sVenc_cfg.input_height= DEFAULT_TILE_DIMENSION;
-            m_sVenc_cfg.dvs_width = DEFAULT_TILE_DIMENSION;
-            m_sVenc_cfg.dvs_height = DEFAULT_TILE_DIMENSION;
+        if (codec == OMX_VIDEO_CodingImageHEIC)
             codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC;
-        } else {
+        else
             codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
-        }
         profile_level.level = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_1;
     } else if (codec == QOMX_VIDEO_CodingTME) {
         m_sVenc_cfg.codectype = V4L2_PIX_FMT_TME;
@@ -1797,18 +1806,6 @@ bool venc_dev::venc_open(OMX_U32 codec)
     bufreq.count = 2;
     ret = ioctl(m_nDriver_fd,VIDIOC_REQBUFS, &bufreq);
     m_sOutput_buff_property.mincount = m_sOutput_buff_property.actualcount = bufreq.count;
-
-    if (m_codec == OMX_VIDEO_CodingImageHEIC) {
-        if (!venc_set_grid_enable()) {
-            DEBUG_PRINT_ERROR("Failed to enable grid");
-            return false;
-        }
-
-        if (!venc_set_ratectrl_cfg(OMX_Video_ControlRateConstantQuality)) {
-            DEBUG_PRINT_ERROR("Failed to set rate control:CQ");
-            return false;
-        }
-    }
 
     if(venc_handle->is_secure_session()) {
         control.id = V4L2_CID_MPEG_VIDC_VIDEO_SECURE;
@@ -1926,7 +1923,11 @@ void venc_dev::venc_close()
         DEBUG_PRINT_HIGH("venc_close X");
         unsubscribe_to_events(m_nDriver_fd);
         close(m_poll_efd);
+#ifdef HYPERVISOR
+        hypv_close(m_nDriver_fd);
+#else
         close(m_nDriver_fd);
+#endif
         m_nDriver_fd = -1;
     }
 
