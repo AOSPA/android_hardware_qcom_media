@@ -50,6 +50,10 @@
 #include <linux/dma-buf.h>
 #endif
 
+#ifdef USE_GBM
+#include "gbm.h"
+#include "gbm_priv.h"
+#endif
 
 #include "qc_omx_component.h"
 
@@ -100,6 +104,16 @@ struct vdec_ion {
     int data_fd;
 };
 
+#ifdef USE_GBM
+struct vdec_gbm {
+    int gbm_device_fd;
+    struct gbm_device *gbm;
+    struct gbm_bo *bo;
+    unsigned long bo_fd;
+    unsigned long meta_fd;
+};
+#endif
+
 struct vdec_bufferpayload {
 	void *bufferaddr;
 	size_t buffer_len;
@@ -111,6 +125,9 @@ struct vdec_bufferpayload {
 typedef struct {
     OMX_BUFFERHEADERTYPE      buffer_header;
     struct vdec_ion           ion_info;
+#ifdef USE_GBM
+    struct vdec_gbm           gbm_info;
+#endif
     struct vdec_bufferpayload buffer_payload;
     SWVDEC_BUFFER             buffer_swvdec;
     bool                      buffer_populated;
@@ -295,6 +312,13 @@ private:
     OMX_PTR          m_app_data; ///< IL client app data pointer
 
     OMX_PRIORITYMGMTTYPE m_prio_mgmt; ///< priority management
+#ifdef USE_GBM
+        // Platform specific details
+    OMX_QCOM_PLATFORM_PRIVATE_LIST      *m_platform_list;
+    OMX_QCOM_PLATFORM_PRIVATE_ENTRY     *m_platform_entry;
+    OMX_QCOM_PLATFORM_PRIVATE_PMEM_INFO *m_pmem_info;
+    int m_gbm_device_fd;
+#endif
 
     bool m_sync_frame_decoding_mode; ///< sync frame decoding mode enabled?
     bool m_android_native_buffers;   ///< android native buffers enabled?
@@ -388,7 +412,14 @@ private:
     OMX_ERRORTYPE flush(unsigned int port_index);
 
     int  ion_memory_alloc_map(struct vdec_ion *p_ion_info, OMX_U32 size, OMX_U32 alignment);
+
     void ion_memory_free(struct vdec_ion *p_ion_buf_info);
+
+#ifdef USE_GBM
+    int gbm_memory_alloc_map(OMX_U32 w,OMX_U32 h,int gbm_device_fd,
+              struct vdec_gbm *gbm_info,OMX_U32 size, int flag);
+    void gbm_memory_free(struct vdec_gbm *buf_gbm_info);
+#endif
     void ion_flush_op(unsigned int index);
     unsigned char *ion_map(int fd, int len);
     OMX_ERRORTYPE ion_unmap(int fd, void *bufaddr, int len);

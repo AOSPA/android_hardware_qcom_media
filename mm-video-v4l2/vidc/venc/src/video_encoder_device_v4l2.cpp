@@ -1418,6 +1418,7 @@ bool venc_dev::venc_get_output_log_flag()
 
 int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len, uint64_t timestamp)
 {
+    int offset =0;
     if (venc_handle->is_secure_session()) {
         DEBUG_PRINT_ERROR("logging secure output buffers is not allowed!");
         return -1;
@@ -1452,7 +1453,7 @@ int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len, u
         if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
             int fps = m_sVenc_cfg.fps_num / m_sVenc_cfg.fps_den;
             IvfFileHeader ivfFileHeader(false, m_sVenc_cfg.input_width,
-                                        m_sVenc_cfg.input_height, fps, 1, 0);
+                                        m_sVenc_cfg.input_height, 1000000, 1, 0);
             fwrite(&ivfFileHeader, sizeof(ivfFileHeader), 1, m_debug.outfile);
         }
     }
@@ -1460,9 +1461,10 @@ int venc_dev::venc_output_log_buffers(const char *buffer_addr, int buffer_len, u
         if (m_sVenc_cfg.codectype == V4L2_PIX_FMT_VP8) {
             IvfFrameHeader ivfFrameHeader(buffer_len, timestamp);
             fwrite(&ivfFrameHeader, sizeof(ivfFrameHeader), 1, m_debug.outfile);
+            offset = sizeof(ivfFrameHeader);
         }
         DEBUG_PRINT_LOW("%s buffer_len:%d", __func__, buffer_len);
-        fwrite(buffer_addr, buffer_len, 1, m_debug.outfile);
+        fwrite(buffer_addr + offset, buffer_len, 1, m_debug.outfile);
     }
     return 0;
 }
@@ -4689,7 +4691,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
         }
 
         plane[extra_idx].bytesused = 0;
-        plane[extra_idx].length = input_extradata_info.size;
+        plane[extra_idx].length = input_extradata_info.buffer_size;
         plane[extra_idx].m.userptr = (unsigned long) (input_extradata_info.uaddr + extradata_index * input_extradata_info.buffer_size);
 #ifdef USE_ION
         plane[extra_idx].reserved[0] = input_extradata_info.ion.data_fd;
@@ -5128,7 +5130,7 @@ bool venc_dev::venc_set_extradata(OMX_U32 extra_data, OMX_BOOL enable)
         case OMX_ExtraDataVideoLTRInfo:
             control.value = V4L2_MPEG_VIDC_EXTRADATA_LTR;
             break;
-#if NEED_TO_REVISIT
+#ifdef V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP
         case OMX_ExtraDataFrameDimension:
             control.value = V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP;
             break;
