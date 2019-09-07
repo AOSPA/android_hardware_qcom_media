@@ -34,7 +34,6 @@ typedef unsigned char uint8;   /* Unsigned 8  bit value */
 typedef int int32;   /* Signed 32 bit value */
 typedef signed short int16;   /* Signed 16 bit value */
 typedef signed char int8;   /* Signed 8  bit value */
-typedef unsigned char _byte;   /* Unsigned 8  bit value type. */
 #define SIMPLE_PROFILE_LEVEL0            0x08
 #define SIMPLE_PROFILE_LEVEL1            0x01
 #define SIMPLE_PROFILE_LEVEL2            0x02
@@ -133,7 +132,7 @@ class MP4_Utils
             uint8 bitPos;
         };
         posInfoType m_posInfo;
-        _byte *m_dataBeginPtr;
+        uint8 *m_dataBeginPtr;
         unsigned int vop_time_resolution;
         bool vop_time_found;
         uint16 m_SrcWidth, m_SrcHeight;   // Dimensions of the source clip
