@@ -2581,6 +2581,24 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
 
                 break;
             }
+        case OMX_IndexParamVideoAndroidVp8Encoder:
+            {
+                DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoAndroidVp8Encoder");
+                OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE *vp8EncodeParams =
+                    (OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE *)paramData;
+
+                if (vp8EncodeParams->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
+                     int pFrames = vp8EncodeParams->nKeyFrameInterval - 1;
+                     if (venc_set_intra_period(pFrames, 0) == false) {
+                         DEBUG_PRINT_ERROR("ERROR: Request for setting intra period failed");
+                         return false;
+                     }
+
+                 } else {
+                     DEBUG_PRINT_ERROR("ERROR: Invalid Port Index for OMX_IndexParamVideoAndroidVp8Encoder");
+                 }
+                 break;
+            }
         case OMX_IndexParamVideoErrorCorrection:
             {
                 DEBUG_PRINT_LOW("venc_set_param:OMX_IndexParamVideoErrorCorrection");
@@ -4550,7 +4568,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
         }
 
         plane[extra_idx].bytesused = 0;
-        plane[extra_idx].length = input_extradata_info.buffer_size;
+        plane[extra_idx].length = input_extradata_info.size;
         plane[extra_idx].m.userptr = (unsigned long) (input_extradata_info.uaddr + extradata_index * input_extradata_info.buffer_size);
 #ifdef USE_ION
         plane[extra_idx].reserved[0] = input_extradata_info.ion.data_fd;
