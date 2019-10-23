@@ -34,12 +34,12 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <stdlib.h>
 #include "OMX_QCOMExtns.h"
-#ifndef _TARGET_KERNEL_VERSION_49_
-#include<linux/msm_vidc_dec.h>
-#include<linux/msm_vidc_enc.h>
-#else
-#include <media/msm_vidc.h>
-#endif
+//#ifndef _TARGET_KERNEL_VERSION_49_
+//#include<linux/msm_vidc_dec.h>
+//#include<linux/msm_vidc_enc.h>
+//#else
+//#include <media/msm_vidc.h>
+//#endif
 
 #ifdef _ANDROID_
 extern "C" {
