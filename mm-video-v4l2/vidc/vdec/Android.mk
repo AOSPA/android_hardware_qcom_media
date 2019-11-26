@@ -56,8 +56,8 @@ include $(CLEAR_VARS)
 
 # Common Includes
 libmm-vdec-inc          := $(LOCAL_PATH)/inc
-libmm-vdec-inc          += $(TOP)/system/core/libion/include
-libmm-vdec-inc          += $(TOP)/system/core/libion/kernel-headers
+libmm-vdec-inc          += $(TOP)/system/memory/libion/include
+libmm-vdec-inc          += $(TOP)/system/memory/libion/kernel-headers
 libmm-vdec-inc          += $(QCOM_MEDIA_ROOT)/mm-video-v4l2/vidc/common/inc
 libmm-vdec-inc          += $(QCOM_MEDIA_ROOT)/mm-core/inc
 libmm-vdec-inc          += $(QCOM_MEDIA_ROOT)/libplatformconfig
