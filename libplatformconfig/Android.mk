@@ -1,4 +1,4 @@
-ifneq ($(QCPATH),)
+#ifneq ($(QCPATH),)
 
 LOCAL_PATH := $(call my-dir)
 LOCAL_DIR_PATH:= $(call my-dir)
@@ -43,7 +43,7 @@ ifeq ($(ENABLE_CONFIGSTORE),true)
 LOCAL_SRC_FILES += ConfigStore.cpp
 LOCAL_CFLAGS += -DENABLE_CONFIGSTORE
 LOCAL_SHARED_LIBRARIES += libhidlbase
-LOCAL_SHARED_LIBRARIES += vendor.qti.hardware.capabilityconfigstore@1.0
+#LOCAL_SHARED_LIBRARIES += vendor.qti.hardware.capabilityconfigstore@1.0
 endif
 ####################
 
@@ -52,4 +52,4 @@ LOCAL_VENDOR_MODULE := true
 
 include $(BUILD_SHARED_LIBRARY)
 
-endif
+#endif
