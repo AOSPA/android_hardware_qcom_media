@@ -16,6 +16,24 @@
       "revId": "24cb89742c7bf111c680dfbccbef7cf2ae394396",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
       "unresolved": true
+    },
+    {
+      "key": {
+        "uuid": "ac229af5_bea2c124",
+        "filename": "libplatformconfig/Android.mk",
+        "patchSetId": 1
+      },
+      "lineNbr": 41,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2019-12-16T06:58:07Z",
+      "side": 1,
+      "message": "or to define vendor.qti.hardware.capabilityconfigstore@1.0 in Android.mk",
+      "parentUuid": "de3b6d19_5b21e2c9",
+      "revId": "24cb89742c7bf111c680dfbccbef7cf2ae394396",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
+      "unresolved": true
     }
   ]
 }
