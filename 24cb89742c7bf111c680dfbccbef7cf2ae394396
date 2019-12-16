@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "key": {
+        "uuid": "de3b6d19_5b21e2c9",
+        "filename": "libplatformconfig/Android.mk",
+        "patchSetId": 1
+      },
+      "lineNbr": 41,
+      "author": {
+        "id": 1000012
+      },
+      "writtenOn": "2019-12-16T06:57:42Z",
+      "side": 1,
+      "message": "would it be better to just make this false if QCPATH isn\u0027t defined?",
+      "revId": "24cb89742c7bf111c680dfbccbef7cf2ae394396",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
+      "unresolved": true
+    }
+  ]
+}
