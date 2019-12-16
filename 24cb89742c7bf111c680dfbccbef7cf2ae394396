@@ -34,6 +34,24 @@
       "revId": "24cb89742c7bf111c680dfbccbef7cf2ae394396",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
       "unresolved": true
+    },
+    {
+      "key": {
+        "uuid": "d3f5f244_fcf5b891",
+        "filename": "libplatformconfig/Android.mk",
+        "patchSetId": 1
+      },
+      "lineNbr": 41,
+      "author": {
+        "id": 1000450
+      },
+      "writtenOn": "2019-12-16T07:05:24Z",
+      "side": 1,
+      "message": "I commented these because it was still throwing a dependency error. Open to any more viable fixes. Just tired of exporting ALLOW_MISSING_DEPENDENCIES and dont wish to add it to DT.",
+      "parentUuid": "ac229af5_bea2c124",
+      "revId": "24cb89742c7bf111c680dfbccbef7cf2ae394396",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad",
+      "unresolved": true
     }
   ]
 }
