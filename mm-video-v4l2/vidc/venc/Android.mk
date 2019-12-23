@@ -23,9 +23,14 @@ libmm-venc-def += -D_ANDROID_ICS_
 TARGETS_THAT_USE_FLAG_MSM8226 := msm8226 msm8916 msm8909
 TARGETS_THAT_DONT_NEED_SW_VENC_MPEG4 := msm8226 msm8916 msm8992 msm8996 sdm660 msm8998
 TARGETS_THAT_DONT_SUPPORT_SW_VENC_ROTATION := msm8226 msm8916 msm8992 msm8996 sdm660 msm8998 msm8909 msm8937
+TARGETS_THAT_DONT_SUPPORT_SW_VENC_720P = atoll
 
 TARGETS_THAT_NEED_SW_VENC_HEVC := msm8992
 TARGETS_THAT_SUPPORT_VQZIP := msm8996 msm8998
+
+ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_DONT_SUPPORT_SW_VENC_720P)),true)
+libmm-venc-def += -DDISABLE_720P
+endif
 
 ifeq ($(TARGET_BOARD_PLATFORM),msm8610)
 libmm-venc-def += -D_MSM8610_
@@ -53,6 +58,10 @@ endif
 
 libmm-venc-def += -DUSE_CAMERA_METABUFFER_UTILS
 
+ifeq ($(ENABLE_HYP),true)
+libmm-venc-def += -DHYPERVISOR
+endif
+
 # Common Includes
 libmm-venc-inc      := $(LOCAL_PATH)/inc
 libmm-venc-inc      += $(TOP)/core/libion/include
@@ -68,6 +77,10 @@ libmm-venc-inc      += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
 libmm-venc-inc      += $(TOP)/frameworks/native/libs/nativewindow/include
 libmm-venc-inc      += $(TOP)/frameworks/native/libs/nativebase/include
 libmm-venc-inc      += $(TOP)/frameworks/native/libs/arect/include
+
+ifeq ($(ENABLE_HYP),true)
+libmm-venc-inc      += hardware/qcom/media/hypv-intercept
+endif
 
 ifneq ($(call is-board-platform-in-list, $(TARGETS_THAT_DONT_SUPPORT_SW_VENC_ROTATION)),true)
 libmm-venc-inc      += hardware/libhardware/include/hardware
@@ -106,6 +119,9 @@ LOCAL_SHARED_LIBRARIES    += libnativewindow
 LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
 # endif # ($(BOARD_USES_ADRENO), true)
 LOCAL_SHARED_LIBRARIES += libqdMetaData
+ifeq ($(ENABLE_HYP),true)
+LOCAL_SHARED_LIBRARIES += libhypv_intercept
+endif
 LOCAL_STATIC_LIBRARIES    := libOmxVidcCommon
 
 LOCAL_SRC_FILES   := src/omx_video_base.cpp

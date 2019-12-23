@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2019, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -52,6 +52,11 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #define OMX_VIDEO_DEC_NUM_INPUT_BUFFERS   2
 #define OMX_VIDEO_DEC_NUM_OUTPUT_BUFFERS  2
 
+/* Based on 1080p resolution */
+#define DEFAULT_TILE_ROWS 3
+#define DEFAULT_TILE_COLS 4
+#define DEFAULT_TILE_DIMENSION 512
+
 #ifdef FEATURE_QTV_WVGA_ENABLE
 #define OMX_VIDEO_DEC_INPUT_BUFFER_SIZE   (256*1024)
 #else
@@ -94,13 +99,16 @@ struct pmem {
 
 struct venc_debug_cap {
     bool in_buffer_log;
+    bool in_buffer_rotated_log;
     bool out_buffer_log;
     bool extradata_log;
     char infile_name[PROPERTY_VALUE_MAX];
+    char inrotatedfile_name[PROPERTY_VALUE_MAX];
     char outfile_name[PROPERTY_VALUE_MAX];
     char extradatafile_name[PROPERTY_VALUE_MAX];
     char log_loc[PROPERTY_VALUE_MAX];
     FILE *infile;
+    FILE *inrotatedfile;
     FILE *outfile;
     FILE *extradatafile;
 };

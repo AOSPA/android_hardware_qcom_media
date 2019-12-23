@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010 - 2018, The Linux Foundation. All rights reserved.
+Copyright (c) 2010 - 2019, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -52,6 +52,9 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <fcntl.h>
 #include <limits.h>
 #include <stdlib.h>
+#ifdef HYPERVISOR
+#include "hypv_intercept.h"
+#endif
 #include <media/hardware/HardwareAPI.h>
 #include <sys/eventfd.h>
 #include "PlatformConfig.h"
@@ -150,6 +153,11 @@ extern "C" {
 #define MAX(x,y) (((x) > (y)) ? (x) : (y))
 
 using namespace android;
+
+#ifdef HYPERVISOR
+#define ioctl(x, y, z) hypv_ioctl(x, y, z)
+#define poll(x, y, z)  hypv_poll(x, y, z)
+#endif
 
 static OMX_U32 maxSmoothStreamingWidth = 1920;
 static OMX_U32 maxSmoothStreamingHeight = 1088;
@@ -779,15 +787,6 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     Platform::Config::getInt32(Platform::vidc_dec_log_out,
             (int32_t *)&m_debug.out_buffer_log, 0);
 
-    Platform::Config::getInt32(Platform::vidc_dec_hfr_fps,
-            (int32_t *)&m_dec_hfr_fps, 0);
-
-    DEBUG_PRINT_HIGH("HFR fps value = %d", m_dec_hfr_fps);
-
-    if (m_dec_hfr_fps) {
-        m_last_rendered_TS = 0;
-    }
-
     Platform::Config::getInt32(Platform::vidc_dec_sec_prefetch_size_internal,
             (int32_t *)&m_dec_secure_prefetch_size_internal, 0);
     Platform::Config::getInt32(Platform::vidc_dec_sec_prefetch_size_output,
@@ -1042,7 +1041,11 @@ omx_vdec::~omx_vdec()
 
     unsubscribe_to_events(drv_ctx.video_driver_fd);
     close(m_poll_efd);
+#ifdef HYPERVISOR
+    hypv_close(drv_ctx.video_driver_fd);
+#else
     close(drv_ctx.video_driver_fd);
+#endif
     pthread_mutex_destroy(&m_lock);
     pthread_mutex_destroy(&c_lock);
     pthread_mutex_destroy(&buf_lock);
@@ -2333,7 +2336,11 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
         role = (OMX_STRING)"OMX.qcom.video.decoder.vp9";
     }
 
+#ifdef HYPERVISOR
+    drv_ctx.video_driver_fd = hypv_open(device_name, O_RDWR);
+#else
     drv_ctx.video_driver_fd = open(device_name, O_RDWR);
+#endif
 
     DEBUG_PRINT_INFO("component_init: %s : fd=%d", role, drv_ctx.video_driver_fd);
 
@@ -4280,7 +4287,7 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                            ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_S_FMT, &fmt);
                                            if (ret) {
                                                DEBUG_PRINT_ERROR("Set Resolution failed");
-                                               eRet = OMX_ErrorUnsupportedSetting;
+                                               eRet = errno == EBUSY ? OMX_ErrorInsufficientResources : OMX_ErrorUnsupportedSetting;
                                            } else
                                                eRet = get_buffer_req(&drv_ctx.op_buf);
                                        }
@@ -4422,7 +4429,7 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                            }
                                            if (ret) {
                                                DEBUG_PRINT_ERROR("Set Resolution failed");
-                                               eRet = OMX_ErrorUnsupportedSetting;
+                                               eRet = errno == EBUSY ? OMX_ErrorInsufficientResources : OMX_ErrorUnsupportedSetting;
                                            } else {
                                                if (!is_down_scalar_enabled)
                                                    eRet = get_buffer_req(&drv_ctx.op_buf);
@@ -4494,15 +4501,15 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                                     }
                                     enum vdec_output_format op_format;
                                     if (portFmt->eColorFormat == (OMX_COLOR_FORMATTYPE)
-                                                     QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m ||
-                                        portFmt->eColorFormat == OMX_COLOR_FormatYUV420SemiPlanar) {
+                                                     QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m) {
                                         op_format = (enum vdec_output_format)VDEC_YUV_FORMAT_NV12;
                                         fmt.fmt.pix_mp.pixelformat = capture_capability = V4L2_PIX_FMT_NV12;
                                         //check if the required color format is a supported flexible format
                                         is_flexible_format = check_supported_flexible_formats(portFmt->eColorFormat);
                                     } else if (portFmt->eColorFormat == (OMX_COLOR_FORMATTYPE)
                                                    QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed ||
-                                               portFmt->eColorFormat == OMX_COLOR_FormatYUV420Planar) {
+                                               portFmt->eColorFormat == OMX_COLOR_FormatYUV420Planar ||
+                                        portFmt->eColorFormat == OMX_COLOR_FormatYUV420SemiPlanar) {
                                         op_format = (enum vdec_output_format)VDEC_YUV_FORMAT_NV12_UBWC;
                                         fmt.fmt.pix_mp.pixelformat = capture_capability = V4L2_PIX_FMT_NV12_UBWC;
                                         //check if the required color format is a supported flexible format
@@ -5222,6 +5229,19 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
             mClientSetLevel = pParam->eLevel;
             break;
         }
+        case OMX_QTIIndexParamVideoDecoderOutputFrameRate:
+        {
+            VALIDATE_OMX_PARAM_DATA(paramData, QOMX_VIDEO_OUTPUT_FRAME_RATE);
+            DEBUG_PRINT_LOW("set_parameter: OMX_QTIIndexParamVideoDecoderOutputFrameRate");
+            QOMX_VIDEO_OUTPUT_FRAME_RATE *pParam = (QOMX_VIDEO_OUTPUT_FRAME_RATE*)paramData;
+            DEBUG_PRINT_LOW("set_parameter: decoder output-frame-rate %d", pParam->fps);
+            m_dec_hfr_fps=pParam->fps;
+            DEBUG_PRINT_HIGH("output-frame-rate value = %d", m_dec_hfr_fps);
+            if (m_dec_hfr_fps) {
+                m_last_rendered_TS = 0;
+            }
+            break;
+        }
         default: {
                  DEBUG_PRINT_ERROR("Setparameter: unknown param %d", paramIndex);
                  eRet = OMX_ErrorUnsupportedIndex;
@@ -5508,7 +5528,7 @@ OMX_ERRORTYPE  omx_vdec::set_config(OMX_IN OMX_HANDLETYPE      hComp,
         }
 
         if (ioctl(drv_ctx.video_driver_fd, VIDIOC_S_CTRL, &control)) {
-            ret = errno == -EBUSY ? OMX_ErrorInsufficientResources :
+            ret = errno == EBUSY ? OMX_ErrorInsufficientResources :
                     OMX_ErrorUnsupportedSetting;
             DEBUG_PRINT_ERROR("Failed to set operating rate %u fps (%s)",
                     rate->nU32 >> 16, errno == -EBUSY ? "HW Overload" : strerror(errno));
@@ -7358,6 +7378,16 @@ OMX_ERRORTYPE  omx_vdec::empty_this_buffer(OMX_IN OMX_HANDLETYPE         hComp,
         buffer->pBuffer = (OMX_U8*)drv_ctx.ptr_inputbuffer[nBufferIndex].bufferaddr;
     }
 
+    /* Check if the input timestamp in seconds is greater than LONG_MAX
+       or lesser than LONG_MIN. */
+    if (buffer->nTimeStamp / 1000000 > LONG_MAX ||
+       buffer->nTimeStamp / 1000000 < LONG_MIN) {
+        /* This timestamp cannot be contained in driver timestamp field */
+        DEBUG_PRINT_ERROR("[ETB] BHdr(%p) pBuf(%p) nTS(%lld) nFL(%u) >> Invalid timestamp",
+            buffer, buffer->pBuffer, buffer->nTimeStamp, (unsigned int)buffer->nFilledLen);
+        return OMX_ErrorBadParameter;
+    }
+
     DEBUG_PRINT_LOW("[ETB] BHdr(%p) pBuf(%p) nTS(%lld) nFL(%u)",
             buffer, buffer->pBuffer, buffer->nTimeStamp, (unsigned int)buffer->nFilledLen);
     if (arbitrary_bytes) {
@@ -8527,6 +8557,7 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
                     is_interlaced && is_duplicate_ts_valid && !is_mbaff);
         }
     }
+
     VIDC_TRACE_INT_LOW("FBD-TS", buffer->nTimeStamp / 1000);
 
     if (m_cb.FillBufferDone) {
@@ -9827,12 +9858,19 @@ bool omx_vdec::alloc_map_ion_memory(OMX_U32 buffer_size, vdec_ion *ion_info, int
         return false;
     }
 
+#ifdef HYPERVISOR
+    flag &= ~ION_FLAG_CACHED;
+#endif
     ion_info->alloc_data.flags = flag;
     ion_info->alloc_data.len = buffer_size;
 
     ion_info->alloc_data.heap_id_mask = ION_HEAP(ION_SYSTEM_HEAP_ID);
     if (secure_mode && (ion_info->alloc_data.flags & ION_FLAG_SECURE)) {
+#ifdef HYPERVISOR
+        ion_info->alloc_data.heap_id_mask = ION_HEAP(ION_SECURE_DISPLAY_HEAP_ID);
+#else
         ion_info->alloc_data.heap_id_mask = ION_HEAP(MEM_HEAP_ID);
+#endif
     }
 
     /* Use secure display cma heap for obvious reasons. */
@@ -10261,12 +10299,16 @@ OMX_ERRORTYPE omx_vdec::update_portdef(OMX_PARAM_PORTDEFINITIONTYPE *portDefn)
     portDefn->eDomain    = OMX_PortDomainVideo;
     memset(&fmt, 0x0, sizeof(struct v4l2_format));
     if (0 == portDefn->nPortIndex) {
+        int ret = 0;
         if (secure_mode) {
-            eRet = get_buffer_req(&drv_ctx.ip_buf);
-            if (eRet) {
-                DEBUG_PRINT_ERROR("%s:get_buffer_req(ip_buf) failed", __func__);
-                return eRet;
+            fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+            fmt.fmt.pix_mp.pixelformat = output_capability;
+            ret = ioctl(drv_ctx.video_driver_fd, VIDIOC_G_FMT, &fmt);
+            if (ret) {
+                DEBUG_PRINT_ERROR("Get Resolution failed");
+                return OMX_ErrorHardware;
             }
+            drv_ctx.ip_buf.buffer_size = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
         }
         portDefn->eDir =  OMX_DirInput;
         portDefn->nBufferCountActual = drv_ctx.ip_buf.actualcount;
@@ -10983,12 +11025,12 @@ bool omx_vdec::handle_mastering_display_color_info(void* data)
     HDRStaticInfo* hdr_info = &m_internal_hdr_info.sInfo;
     bool internal_disp_changed_flag = false;
 
-    internal_disp_changed_flag |= (hdr_info->sType1.mR.x != mastering_display_payload->nDisplayPrimariesX[0]) ||
-        (hdr_info->sType1.mR.y != mastering_display_payload->nDisplayPrimariesY[0]);
-    internal_disp_changed_flag |= (hdr_info->sType1.mG.x != mastering_display_payload->nDisplayPrimariesX[1]) ||
-        (hdr_info->sType1.mG.y != mastering_display_payload->nDisplayPrimariesY[1]);
-    internal_disp_changed_flag |= (hdr_info->sType1.mB.x != mastering_display_payload->nDisplayPrimariesX[2]) ||
-        (hdr_info->sType1.mB.y != mastering_display_payload->nDisplayPrimariesY[2]);
+    internal_disp_changed_flag |= (hdr_info->sType1.mG.x != mastering_display_payload->nDisplayPrimariesX[0]) ||
+        (hdr_info->sType1.mG.y != mastering_display_payload->nDisplayPrimariesY[0]);
+    internal_disp_changed_flag |= (hdr_info->sType1.mB.x != mastering_display_payload->nDisplayPrimariesX[1]) ||
+        (hdr_info->sType1.mB.y != mastering_display_payload->nDisplayPrimariesY[1]);
+    internal_disp_changed_flag |= (hdr_info->sType1.mR.x != mastering_display_payload->nDisplayPrimariesX[2]) ||
+        (hdr_info->sType1.mR.y != mastering_display_payload->nDisplayPrimariesY[2]);
 
     internal_disp_changed_flag |= (hdr_info->sType1.mW.x != mastering_display_payload->nWhitePointX) ||
         (hdr_info->sType1.mW.y != mastering_display_payload->nWhitePointY);
@@ -11002,12 +11044,12 @@ bool omx_vdec::handle_mastering_display_color_info(void* data)
         (hdr_info->sType1.mMinDisplayLuminance != mastering_display_payload->nMinDisplayMasteringLuminance);
 
     if (internal_disp_changed_flag) {
-        hdr_info->sType1.mR.x = mastering_display_payload->nDisplayPrimariesX[0];
-        hdr_info->sType1.mR.y = mastering_display_payload->nDisplayPrimariesY[0];
-        hdr_info->sType1.mG.x = mastering_display_payload->nDisplayPrimariesX[1];
-        hdr_info->sType1.mG.y = mastering_display_payload->nDisplayPrimariesY[1];
-        hdr_info->sType1.mB.x = mastering_display_payload->nDisplayPrimariesX[2];
-        hdr_info->sType1.mB.y = mastering_display_payload->nDisplayPrimariesY[2];
+        hdr_info->sType1.mG.x = mastering_display_payload->nDisplayPrimariesX[0];
+        hdr_info->sType1.mG.y = mastering_display_payload->nDisplayPrimariesY[0];
+        hdr_info->sType1.mB.x = mastering_display_payload->nDisplayPrimariesX[1];
+        hdr_info->sType1.mB.y = mastering_display_payload->nDisplayPrimariesY[1];
+        hdr_info->sType1.mR.x = mastering_display_payload->nDisplayPrimariesX[2];
+        hdr_info->sType1.mR.y = mastering_display_payload->nDisplayPrimariesY[2];
         hdr_info->sType1.mW.x = mastering_display_payload->nWhitePointX;
         hdr_info->sType1.mW.y = mastering_display_payload->nWhitePointY;
 
@@ -11592,11 +11634,13 @@ OMX_ERRORTYPE omx_vdec::enable_extradata(OMX_U64 requested_extradata,
                 DEBUG_PRINT_HIGH("Failed to set QP extradata");
             }
         }
-        if (!secure_mode && (requested_extradata & OMX_EXTNUSER_EXTRADATA)) {
-            control.id = V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA;
-            control.value = V4L2_MPEG_VIDC_EXTRADATA_STREAM_USERDATA;
-            if (ioctl(drv_ctx.video_driver_fd, VIDIOC_S_CTRL, &control)) {
-                DEBUG_PRINT_HIGH("Failed to set stream userdata extradata");
+        if (requested_extradata & OMX_EXTNUSER_EXTRADATA) {
+            if (!secure_mode || (secure_mode && output_capability == V4L2_PIX_FMT_HEVC)) {
+                control.id = V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA;
+                control.value = V4L2_MPEG_VIDC_EXTRADATA_STREAM_USERDATA;
+                if (ioctl(drv_ctx.video_driver_fd, VIDIOC_S_CTRL, &control)) {
+                    DEBUG_PRINT_HIGH("Failed to set stream userdata extradata");
+                }
             }
         }
 #if NEED_TO_REVISIT
