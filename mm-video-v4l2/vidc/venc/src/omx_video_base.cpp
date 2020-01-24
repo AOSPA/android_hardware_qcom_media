@@ -290,6 +290,7 @@ omx_video::omx_video():
     mMapPixelFormat2Converter.insert({
             {HAL_PIXEL_FORMAT_RGBA_8888, RGBA8888},
             {HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS_UBWC, NV12_UBWC},
+            {HAL_PIXEL_FORMAT_NV12_HEIF, NV12_512},
                 });
 
     pthread_mutex_init(&m_lock, NULL);
@@ -328,13 +329,6 @@ omx_video::omx_video():
 omx_video::~omx_video()
 {
     DEBUG_PRINT_HIGH("~omx_video(): Inside Destructor()");
-    if (msg_thread_created) {
-        msg_thread_stop = true;
-        post_message(this, OMX_COMPONENT_CLOSE_MSG);
-        DEBUG_PRINT_HIGH("omx_video: Waiting on Msg Thread exit");
-        pthread_join(msg_thread_id,NULL);
-    }
-    DEBUG_PRINT_HIGH("omx_video: Waiting on Async Thread exit");
     /*For V4L2 based drivers, pthread_join is done in device_close
      * so no need to do it here*/
     pthread_mutex_destroy(&m_lock);
@@ -1738,6 +1732,17 @@ OMX_ERRORTYPE  omx_video::get_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE* pParam =
                         (OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE*)paramData;
                 DEBUG_PRINT_LOW("get_parameter: OMX_IndexParamVideoAndroidImageGrid");
+                m_sParamAndroidImageGrid.bEnabled = OMX_TRUE;
+                m_sParamAndroidImageGrid.nTileWidth = DEFAULT_TILE_DIMENSION;
+                m_sParamAndroidImageGrid.nTileHeight = DEFAULT_TILE_DIMENSION;
+                m_sParamAndroidImageGrid.nGridRows =
+                    m_sInPortDef.format.video.nFrameHeight > 0 ?
+                    ((m_sInPortDef.format.video.nFrameHeight - 1) / DEFAULT_TILE_DIMENSION + 1) :
+                    DEFAULT_TILE_ROWS;
+                    m_sParamAndroidImageGrid.nGridCols =
+                    m_sInPortDef.format.video.nFrameWidth > 0 ?
+                    ((m_sInPortDef.format.video.nFrameWidth - 1) / DEFAULT_TILE_DIMENSION + 1) :
+                    DEFAULT_TILE_COLS;
                 memcpy(pParam, &m_sParamAndroidImageGrid, sizeof(m_sParamAndroidImageGrid));
                 break;
             }
@@ -5128,6 +5133,9 @@ OMX_ERRORTYPE  omx_video::empty_this_buffer_opaque(OMX_IN OMX_HANDLETYPE hComp,
         mUsesColorConversion = is_conv_needed(handle);
         bool interlaced = is_ubwc_interlaced(handle);
 
+        if (m_sOutPortDef.format.video.eCompressionFormat == OMX_VIDEO_CodingImageHEIC)
+            c2dDestFmt = NV12_512;
+
         if (c2dcc.getConversionNeeded() &&
             c2dcc.isPropChanged(m_sInPortDef.format.video.nFrameWidth,
                                 interlaced ? ((m_sInPortDef.format.video.nFrameHeight + 1) / 2) :
@@ -5363,7 +5371,8 @@ OMX_ERRORTYPE omx_video::push_input_buffer(OMX_HANDLETYPE hComp)
                 handle->format == QOMX_COLOR_Format32bitRGBA8888Compressed ||
                 handle->format == HAL_PIXEL_FORMAT_YCbCr_420_TP10_UBWC ||
                 handle->format == HAL_PIXEL_FORMAT_NV21_ZSL ||
-                handle->format == QOMX_COLOR_FormatYVU420SemiPlanar);
+                handle->format == QOMX_COLOR_FormatYVU420SemiPlanar ||
+                handle->format == HAL_PIXEL_FORMAT_NV12_HEIF);
 
             Input_pmem_info.buffer = media_buffer;
             Input_pmem_info.fd = handle->fd;
