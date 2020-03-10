@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010 - 2019, The Linux Foundation. All rights reserved.
+Copyright (c) 2010 - 2020, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -1154,6 +1154,12 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode()
         // V4L2_MPEG_VIDC_VIDEO_DPB_COLOR_FMT_NONE
     }
 
+    eRet = set_dpb(enable_split);
+    if (eRet) {
+        DEBUG_PRINT_HIGH("Failed to set DPB buffer mode: %d", eRet);
+        return eRet;
+    }
+
     if (capability_changed == true) {
         // Get format for CAPTURE port
         fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -1176,10 +1182,6 @@ OMX_ERRORTYPE omx_vdec::decide_dpb_buffer_mode()
         !BITMASK_PRESENT(&m_flags, OMX_COMPONENT_OUTPUT_ENABLE_PENDING)) {
         DEBUG_PRINT_LOW("Invalid state to decide on dpb-opb split");
         return OMX_ErrorNone;
-    }
-    eRet = set_dpb(enable_split);
-    if (eRet) {
-        DEBUG_PRINT_HIGH("Failed to set DPB buffer mode: %d", eRet);
     }
 
     return eRet;
