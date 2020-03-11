@@ -6448,6 +6448,10 @@ OMX_ERRORTYPE omx_vdec::free_output_buffer(OMX_BUFFERHEADERTYPE *bufferHdr,
             DEBUG_PRINT_HIGH("All output buffers released, free extradata");
             free_extradata();
             }
+        } else {
+            client_buffers.allocated_count--;
+            DEBUG_PRINT_HIGH("free_output_buffer: allocated_count decremented: %d",
+                    client_buffers.allocated_count);
         }
     }
 
@@ -6946,6 +6950,9 @@ OMX_ERRORTYPE  omx_vdec::allocate_output_buffer(
             int cache_flag = ION_FLAG_CACHED;
             if (intermediate == true && client_buffers.is_color_conversion_enabled()) {
                 cache_flag = 0;
+                client_buffers.allocated_count++;
+                DEBUG_PRINT_HIGH("allocate_output_buffer: allocated_count incremented %d",
+                    client_buffers.allocated_count);
             }
             bool status = alloc_map_ion_memory(drv_ctx.op_buf.buffer_size,
                                                &(*omx_op_buf_ion_info)[i],
@@ -10261,8 +10268,7 @@ OMX_ERRORTYPE omx_vdec::set_buffer_req(vdec_allocatorproperty *buffer_prop)
             eRet = OMX_ErrorInsufficientResources;
         } else {
             if (!client_buffers.update_buffer_req()) {
-                DEBUG_PRINT_ERROR("Setting c2D buffer requirements failed");
-                eRet = OMX_ErrorInsufficientResources;
+                DEBUG_PRINT_HIGH("set_buffer_req: client_buffers.update_buffer_req failed, but not fatal");
             }
         }
     }
@@ -10334,8 +10340,7 @@ OMX_ERRORTYPE omx_vdec::update_portdef(OMX_PARAM_PORTDEFINITIONTYPE *portDefn)
        }
        drv_ctx.op_buf.buffer_size = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
        if (!client_buffers.update_buffer_req()) {
-           DEBUG_PRINT_ERROR("client_buffers.update_buffer_req Failed");
-           return OMX_ErrorHardware;
+           DEBUG_PRINT_HIGH("update_portdef: client_buffers.update_buffer_req failed, but not fatal");
        }
 
         if (!client_buffers.get_buffer_req(buf_size)) {
@@ -12436,6 +12441,8 @@ bool omx_vdec::allocate_color_convert_buf::update_buffer_req()
     ioctl(omx->drv_ctx.video_driver_fd, VIDIOC_G_FMT, &fmt);
     width = fmt.fmt.pix_mp.width;
     height =  fmt.fmt.pix_mp.height;
+    DEBUG_PRINT_HIGH("update_buffer_req: width = %d, height = %d, C2D width = %d, C2D height = %d",
+            width, height, m_c2d_width, m_c2d_height);
 
     bool resolution_upgrade = (height > m_c2d_height ||
             width > m_c2d_width);
@@ -12655,7 +12662,7 @@ OMX_ERRORTYPE omx_vdec::allocate_color_convert_buf::set_buffer_req(
 
     if (enabled) {
         // disallow changing buffer size/count while we have active allocated buffers
-        if (allocated_count > 0) {
+        if ((buffer_size_req != buffer_size) && (allocated_count > 0)) {
             DEBUG_PRINT_ERROR("Cannot change C2D buffer size from %u to %u with %d active allocations",
                     buffer_size_req, buffer_size, allocated_count);
             return OMX_ErrorInvalidState;
