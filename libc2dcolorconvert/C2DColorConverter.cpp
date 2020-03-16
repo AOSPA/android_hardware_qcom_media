@@ -583,6 +583,8 @@ size_t C2DColorConverter::calcYSize(ColorConvertFormat format, size_t width, siz
                           VENUS_Y_SCANLINES(COLOR_FMT_NV12_BPP10_UBWC, height), ALIGN4K) +
                 ALIGN( VENUS_Y_META_STRIDE(COLOR_FMT_NV12_BPP10_UBWC, width) *
                        VENUS_Y_META_SCANLINES(COLOR_FMT_NV12_BPP10_UBWC, height), ALIGN4K);
+        case CbYCrY:
+            return ALIGN(width, ALIGN16) * height;
         default:
             ALOGW("%s: Format not supported , %d", __FUNCTION__, format);
             return 0;
