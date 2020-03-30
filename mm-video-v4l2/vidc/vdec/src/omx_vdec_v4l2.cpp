@@ -1501,6 +1501,20 @@ void omx_vdec::process_event_cb(void *ctxt)
                                         pThis->omx_report_error();
                                         break;
                                     }
+                                    OMX_COLOR_FORMATTYPE eColorFormat;
+                                    if (!pThis->m_progressive) {
+                                        pThis->m_disable_ubwc_mode = true;
+                                    }
+                                    if (pThis->m_disable_ubwc_mode) {
+                                        pThis->client_buffers.get_color_format(eColorFormat);
+                                        if (eColorFormat == (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420PackedSemiPlanar32mCompressed) {
+                                            eColorFormat = (OMX_COLOR_FORMATTYPE)QOMX_COLOR_FORMATYUV420PackedSemiPlanar32m;
+                                            DEBUG_PRINT_HIGH("OMX_CommandPortDisable: set_color_format %d", eColorFormat);
+                                            if (!pThis->client_buffers.set_color_format(eColorFormat)) {
+                                                DEBUG_PRINT_ERROR("Set color format failed");
+                                            }
+                                        }
+                                    }
                                 }
                                 pThis->m_cb.EventHandler(&pThis->m_cmp, pThis->m_app_data,
                                         OMX_EventCmdComplete, p1, p2, NULL );
@@ -11291,6 +11305,9 @@ bool omx_vdec::handle_extradata(OMX_BUFFERHEADERTYPE *p_buf_hdr)
                     }
 
                     if (m_enable_android_native_buffers) {
+                        if (!m_progressive) {
+                            enable = OMX_InterlaceFrameProgressive;
+                        }
                         DEBUG_PRINT_LOW("setMetaData INTERLACED format:%d enable:%d",
                                         payload->format, enable);
 
