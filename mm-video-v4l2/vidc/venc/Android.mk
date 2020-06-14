@@ -81,16 +81,16 @@ include $(CLEAR_VARS)
 
 libmm-venc-inc      += $(LOCAL_PATH)/inc
 libmm-venc-inc      += $(OMX_VIDEO_PATH)/vidc/common/inc
-libmm-venc-inc      += $(call project-path-for,qcom-media)/mm-core/inc
-libmm-venc-inc      += $(call project-path-for,qcom-media)/libstagefrighthw
-libmm-venc-inc      += $(call project-path-for,qcom-display)/libgralloc
+libmm-venc-inc      += hardware/qcom/media/mm-core/inc
+libmm-venc-inc      += hardware/qcom/media/libstagefrighthw
+libmm-venc-inc      += hardware/qcom/display/libgralloc
 libmm-venc-inc      += frameworks/native/include/media/hardware
 libmm-venc-inc      += frameworks/native/include/media/openmax
 libmm-venc-inc      += frameworks/native/libs/nativewindow/include/
 libmm-venc-inc      += frameworks/native/libs/arect/include/
 libmm-venc-inc      += frameworks/native/libs/nativebase/include
-libmm-venc-inc      += $(call project-path-for,qcom-media)/libc2dcolorconvert
-libmm-venc-inc      += $(call project-path-for,qcom-display)/libcopybit
+libmm-venc-inc      += hardware/qcom/media/libc2dcolorconvert
+libmm-venc-inc      += hardware/qcom/display/libcopybit
 libmm-venc-inc      += frameworks/av/include/media/stagefright
 libmm-venc-inc      += $(TARGET_OUT_HEADERS)/qcom/display/
 
@@ -130,8 +130,8 @@ include $(CLEAR_VARS)
 mm-venc-test720p-inc            := $(TARGET_OUT_HEADERS)/mm-core
 mm-venc-test720p-inc            += $(LOCAL_PATH)/inc
 mm-venc-test720p-inc            += $(OMX_VIDEO_PATH)/vidc/common/inc
-mm-venc-test720p-inc            += $(call project-path-for,qcom-media)/mm-core/inc
-mm-venc-test720p-inc            += $(call project-path-for,qcom-display)/libgralloc
+mm-venc-test720p-inc            += hardware/qcom/media/mm-core/inc
+mm-venc-test720p-inc            += hardware/qcom/display/libgralloc
 
 LOCAL_HEADER_LIBRARIES := \
         generated_kernel_headers \
@@ -159,7 +159,7 @@ include $(BUILD_EXECUTABLE)
 include $(CLEAR_VARS)
 
 venc-test-inc                   += $(LOCAL_PATH)/inc
-venc-test-inc                   += $(call project-path-for,qcom-display)/libgralloc
+venc-test-inc                   += hardware/qcom/display/libgralloc
 
 LOCAL_HEADER_LIBRARIES := \
         generated_kernel_headers \
@@ -169,7 +169,7 @@ LOCAL_MODULE                    := mm-video-encdrv-test
 LOCAL_MODULE_TAGS               := optional
 LOCAL_VENDOR_MODULE             := true
 LOCAL_C_INCLUDES                := $(venc-test-inc)
-LOCAL_C_INCLUDES                += $(call project-path-for,qcom-media)/mm-core/inc
+LOCAL_C_INCLUDES                += hardware/qcom/media/mm-core/inc
 LOCAL_PRELINK_MODULE            := false
 
 LOCAL_SRC_FILES                 := test/video_encoder_test.c
