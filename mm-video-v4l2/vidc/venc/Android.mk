@@ -81,6 +81,7 @@ libmm-venc-add-dep  := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
 # 			Make the Shared library (libOmxVenc)
 # ---------------------------------------------------------------------------------
 
+ifneq ($(QCPATH),)
 include $(CLEAR_VARS)
 
 LOCAL_MODULE                    := libOmxVenc
@@ -123,6 +124,7 @@ LOCAL_SRC_FILES   += src/video_encoder_device_v4l2.cpp
 LOCAL_SRC_FILES   += src/video_encoder_device_v4l2_params.cpp
 
 include $(BUILD_SHARED_LIBRARY)
+endif # QCPATH
 
 ifneq ($(call is-board-platform-in-list, $(TARGETS_THAT_DONT_NEED_SW_VENC_MPEG4)),true)
 # ---------------------------------------------------------------------------------
