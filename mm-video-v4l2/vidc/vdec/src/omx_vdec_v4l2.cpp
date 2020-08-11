@@ -10807,6 +10807,8 @@ void omx_vdec::convert_color_space_info(OMX_U32 primaries, OMX_U32 range,
     switch (transfer) {
         case MSM_VIDC_TRANSFER_BT709_5:
         case MSM_VIDC_TRANSFER_601_6_525: // case MSM_VIDC_TRANSFER_601_6_625:
+        case MSM_VIDC_TRANSFER_BT_2020_10:
+        case MSM_VIDC_TRANSFER_BT_2020_12:
             aspects->mTransfer = ColorAspects::TransferSMPTE170M;
             break;
         case MSM_VIDC_TRANSFER_BT_470_6_M:
@@ -12684,6 +12686,10 @@ OMX_BUFFERHEADERTYPE* omx_vdec::allocate_color_convert_buf::get_il_buf_hdr
             } else {
                 unsigned int filledLen = 0;
                 c2dcc.getBuffFilledLen(C2D_OUTPUT, filledLen);
+                if (filledLen > omx->m_out_mem_ptr[index].nAllocLen) {
+                    DEBUG_PRINT_ERROR("Invalid C2D FBD length filledLen = %d alloclen = %d ",filledLen,omx->m_out_mem_ptr[index].nAllocLen);
+                    filledLen = 0;
+                }
                 m_out_mem_ptr_client[index].nFilledLen = filledLen;
                 omx->m_out_mem_ptr[index].nFilledLen = filledLen;
             }
