@@ -1660,7 +1660,7 @@ void venc_dev::venc_close()
     if ((int)m_nDriver_fd >= 0) {
         DEBUG_PRINT_HIGH("venc_close E");
 
-        if(eventfd_write(m_poll_efd, 1)) {
+        if(eventfd_write(dup(m_poll_efd), 1)) {
             DEBUG_PRINT_ERROR("eventfd_write failed for fd: %d, errno = %d, force stop async_thread", m_poll_efd, errno);
             async_thread_force_stop = true;
         }
@@ -5835,7 +5835,7 @@ bool venc_dev::venc_set_intra_refresh(OMX_VIDEO_INTRAREFRESHTYPE ir_mode, OMX_U3
         control_mode.value = V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_CYCLIC_ADAPTIVE;
     } else if ((ir_mode == OMX_VIDEO_IntraRefreshRandom) &&
             (irMBs < ((m_sVenc_cfg.dvs_width * m_sVenc_cfg.dvs_height)>>8))) {
-        control_mode.value = V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_RANDOM;
+        control_mode.value = V4L2_CID_MPEG_VIDC_VIDEO_INTRA_REFRESH_RANDOMMODE;
         control_mbs.id = V4L2_CID_MPEG_VIDC_VIDEO_AIR_MBS;
         control_mbs.value = irMBs;
     } else {
