@@ -5626,6 +5626,23 @@ OMX_ERRORTYPE  omx_vdec::set_config(OMX_IN OMX_HANDLETYPE      hComp,
         VALIDATE_OMX_VENDOR_EXTENSION_PARAM_DATA(ext);
 
         return set_vendor_extension_config(ext);
+    }  else if ((int)configIndex == (int)OMX_IndexConfigLowLatency) {
+        OMX_CONFIG_BOOLEANTYPE *lowLatency = (OMX_CONFIG_BOOLEANTYPE *)configData;
+        DEBUG_PRINT_LOW("Set_config: low-latency %u",(uint32_t)lowLatency->bEnabled);
+        struct v4l2_control control;
+        control.id = V4L2_CID_MPEG_VIDC_VIDEO_LOWLATENCY_MODE;
+        if (lowLatency->bEnabled) {
+            control.value = V4L2_MPEG_MSM_VIDC_ENABLE;
+        } else {
+            control.value = V4L2_MPEG_MSM_VIDC_DISABLE;
+        }
+        if (ioctl(drv_ctx.video_driver_fd, VIDIOC_S_CTRL, &control)) {
+            DEBUG_PRINT_ERROR("Set low latency failed");
+            ret = OMX_ErrorUnsupportedSetting;
+        } else {
+            m_sParamLowLatency.bEnableLowLatencyMode = lowLatency->bEnabled;
+        }
+        return ret;
     }
 
     return OMX_ErrorNotImplemented;
@@ -11202,6 +11219,9 @@ void omx_vdec::convert_hdr_info_to_metadata(HDRStaticInfo& hdr_info, ColorMetaDa
 
 void omx_vdec::get_preferred_color_aspects(ColorAspects& preferredColorAspects)
 {
+    OMX_U32 width = drv_ctx.video_resolution.frame_width;
+    OMX_U32 height = drv_ctx.video_resolution.frame_height;
+
     // For VPX, use client-color if specified.
     // For the rest, try to use the stream-color if present
     bool preferClientColor = (output_capability == V4L2_PIX_FMT_VP8 ||
@@ -11212,11 +11232,11 @@ void omx_vdec::get_preferred_color_aspects(ColorAspects& preferredColorAspects)
     const ColorAspects &defaultColor = preferClientColor ?
         m_internal_color_space.sAspects : m_client_color_space.sAspects;
 
-    /* Client sets BT2020 for UHD and higher. Set correct aspects if the bistream is 8-bit */
-    if ((m_client_color_space.sAspects.mPrimaries == ColorAspects::PrimariesBT2020) &&
+    if ((width >= 3840 || height >= 3840 || width * (int64_t)height >= 3840 * 1634) &&
+        (m_client_color_space.sAspects.mPrimaries == ColorAspects::PrimariesBT2020) &&
         (dpb_bit_depth == MSM_VIDC_BIT_DEPTH_8)) {
-    m_client_color_space.sAspects.mPrimaries = ColorAspects::PrimariesBT709_5;
-    m_client_color_space.sAspects.mMatrixCoeffs = ColorAspects::MatrixBT709_5;
+        m_client_color_space.sAspects.mPrimaries = ColorAspects::PrimariesBT709_5;
+        m_client_color_space.sAspects.mMatrixCoeffs = ColorAspects::MatrixBT709_5;
     }
 
     preferredColorAspects.mPrimaries = preferredColor.mPrimaries != ColorAspects::PrimariesUnspecified ?
