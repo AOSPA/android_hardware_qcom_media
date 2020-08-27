@@ -63,6 +63,15 @@ void venc_dev::venc_get_consumer_usage(OMX_U32* usage)
         DEBUG_PRINT_INFO("Clear UBWC consumer usage bits as 8-bit linear color requested");
     }
 
+    if (venc_handle->is_flip_conv_needed())
+        *usage = *usage | GRALLOC_USAGE_SW_READ_OFTEN;
+
+    if (m_codec == OMX_VIDEO_CodingImageHEIC) {
+        DEBUG_PRINT_INFO("Clear UBWC and set HEIF consumer usage bit");
+        *usage &= ~GRALLOC_USAGE_PRIVATE_ALLOC_UBWC;
+        *usage |= GRALLOC_USAGE_PRIVATE_HEIF_VIDEO;
+    }
+
     DEBUG_PRINT_INFO("venc_get_consumer_usage 0x%x", *usage);
 }
 
@@ -129,10 +138,13 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                 OMX_CONFIG_MIRRORTYPE *mirror = (OMX_CONFIG_MIRRORTYPE*) configData;
                 DEBUG_PRINT_LOW("venc_set_param: OMX_IndexConfigCommonMirror");
 
-                if (venc_set_mirror(mirror->eMirror) == false) {
+                if (!venc_handle->m_no_vpss && venc_set_mirror(mirror->eMirror) == false) {
                     DEBUG_PRINT_ERROR("ERROR: Setting OMX_IndexConfigCommonMirror failed");
                     return false;
+                } else if(venc_handle->m_no_vpss) {
+                    venc_handle->initFastCV();
                 }
+
                 break;
             }
         case OMX_IndexConfigCommonRotate:
@@ -144,7 +156,7 @@ bool venc_dev::venc_set_config(void *configData, OMX_INDEXTYPE index)
                    return false;
                 }
 
-                if (venc_handle->m_c2d_rotation) {
+                if (venc_handle->m_no_vpss) {
                     if (venc_prepare_c2d_rotation(config_rotation->nRotation) == false) {
                         DEBUG_PRINT_ERROR("ERROR: venc_prepare_c2d_rotation failed");
                         return false;
