@@ -18,6 +18,8 @@ else ifeq ($(filter $(TARGET_BOARD_PLATFORM), $(MSMSTEPPE)),$(TARGET_BOARD_PLATF
 OMXCORE_CFLAGS += -D_STEPPE_
 else ifeq ($(filter $(TARGET_BOARD_PLATFORM), $(TRINKET)),$(TARGET_BOARD_PLATFORM))
 OMXCORE_CFLAGS += -D_TRINKET_
+else ifeq ($(filter $(TARGET_BOARD_PLATFORM), atoll),$(TARGET_BOARD_PLATFORM))
+OMXCORE_CFLAGS += -D_ATOLL_
 else
 OMXCORE_CFLAGS += -D_DEFAULT_
 endif
@@ -64,11 +66,13 @@ LOCAL_COPY_HEADERS      += inc/QCMetaData.h
 #===============================================================================
 
 LOCAL_C_INCLUDES        := $(LOCAL_PATH)/src/common
-LOCAL_C_INCLUDES        += $(LOCAL_PATH)/inc
 LOCAL_C_INCLUDES        += $(TOP)/hardware/qcom/sm8150/media/libplatformconfig
 
 LOCAL_HEADER_LIBRARIES := \
-        libutils_headers
+        libutils_headers \
+        libomxcore_headers
+
+LOCAL_EXPORT_HEADER_LIBRARY_HEADERS := libomxcore_headers
 
 LOCAL_PRELINK_MODULE    := false
 LOCAL_MODULE            := libOmxCore
@@ -97,11 +101,13 @@ include $(BUILD_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 
 LOCAL_C_INCLUDES        := $(LOCAL_PATH)/src/common
-LOCAL_C_INCLUDES        += $(LOCAL_PATH)/inc
 LOCAL_C_INCLUDES        += $(TOP)/hardware/qcom/sm8150/media/libplatformconfig
 
 LOCAL_HEADER_LIBRARIES := \
-        libutils_headers
+        libutils_headers \
+        libomxcore_headers
+
+LOCAL_EXPORT_HEADER_LIBRARY_HEADERS := libomxcore_headers
 
 LOCAL_PRELINK_MODULE    := false
 LOCAL_MODULE            := libmm-omxcore
@@ -115,12 +121,20 @@ LOCAL_CFLAGS            := $(OMXCORE_CFLAGS)
 
 LOCAL_SRC_FILES         := src/common/omx_core_cmp.cpp
 LOCAL_SRC_FILES         += src/common/qc_omx_core.c
-ifneq (,$(filter msmnile sm8150 $(MSMSTEPPE) $(TRINKET),$(TARGET_BOARD_PLATFORM)))
+ifneq (,$(filter msmnile sdmshrike sm8150 $(MSMSTEPPE) $(TRINKET) atoll,$(TARGET_BOARD_PLATFORM)))
 LOCAL_SRC_FILES         += src/$(MM_CORE_TARGET)/registry_table.c
 else
 LOCAL_SRC_FILES         += src/$(MM_CORE_TARGET)/qc_registry_table.c
 endif
 
 include $(BUILD_SHARED_LIBRARY)
+
+include $(CLEAR_VARS)
+
+LOCAL_MODULE := libomxcore_headers
+LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/inc
+LOCAL_VENDOR_MODULE := true
+
+include $(BUILD_HEADER_LIBRARY)
 
 endif #BUILD_TINY_ANDROID

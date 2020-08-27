@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2019, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -241,13 +241,32 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
         strlcpy((char *)m_cRole, "video_encoder.vp8",OMX_MAX_STRINGNAME_SIZE);
         codec_type = OMX_VIDEO_CodingVP8;
     } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc",    \
+                OMX_MAX_STRINGNAME_SIZE) ||
+               !strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc.cq",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
         strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
         codec_type = OMX_VIDEO_CodingHEVC;
     } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.heic",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
-        strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
-        codec_type = OMX_VIDEO_CodingImageHEIC;
+        char platform_name[PROP_VALUE_MAX] = {0};
+        char version[PROP_VALUE_MAX] = {0};
+        property_get("ro.board.platform", platform_name, "0");  //HW ID
+        if (!strcmp(platform_name, "sm6150"))
+        {
+            if (property_get("vendor.media.target.version", version, "0") &&
+                    (atoi(version) == 0))
+            {
+                //Sku version, HEIC is disabled on this target
+                DEBUG_PRINT_ERROR("heic encoder not supported on this target");
+                eRet = OMX_ErrorInvalidComponentName;
+            } else {
+                strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
+                codec_type = OMX_VIDEO_CodingImageHEIC;
+            }
+        } else {
+            strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
+            codec_type = OMX_VIDEO_CodingImageHEIC;
+        }
     } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.hevc.secure",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
         strlcpy((char *)m_cRole, "video_encoder.hevc", OMX_MAX_STRINGNAME_SIZE);
@@ -255,8 +274,31 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
         secure_session = true;
     } else if (!strncmp((char *)m_nkind, "OMX.qcom.video.encoder.tme",    \
                 OMX_MAX_STRINGNAME_SIZE)) {
-        strlcpy((char *)m_cRole, "video_encoder.tme", OMX_MAX_STRINGNAME_SIZE);
-        codec_type = (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME;
+        char platform_name[PROP_VALUE_MAX] = {0};
+        char version[PROP_VALUE_MAX] = {0};
+        property_get("ro.board.platform", platform_name, "0");  //HW ID
+        if (!strcmp(platform_name, "sm6150")) {
+            if (property_get("vendor.media.target.version", version, "0") &&
+                (atoi(version) == 0)){
+                 //Sku version, TME is enabled on this target
+                strlcpy((char *)m_cRole, "video_encoder.tme", OMX_MAX_STRINGNAME_SIZE);
+                codec_type = (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME;
+            }
+            else {
+                //TME is disabled for Moorea
+                DEBUG_PRINT_LOW("TME is not supported");
+                eRet = OMX_ErrorInvalidComponentName;
+            }
+        }
+        else if (!strcmp(platform_name, "atoll")) {
+            //TME is enabled on ATOLL
+            strlcpy((char *)m_cRole, "video_encoder.tme", OMX_MAX_STRINGNAME_SIZE);
+            codec_type = (OMX_VIDEO_CODINGTYPE)QOMX_VIDEO_CodingTME;
+        }
+        else {
+            DEBUG_PRINT_LOW("TME is not supported");
+            eRet = OMX_ErrorInvalidComponentName;
+        }
     } else {
         DEBUG_PRINT_ERROR("ERROR: Unknown Component");
         eRet = OMX_ErrorInvalidComponentName;
@@ -459,6 +501,7 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
                 &m_sOutPortDef.nBufferSize,
                 m_sOutPortDef.nPortIndex) != true) {
         eRet = OMX_ErrorUndefined;
+        goto init_error;
     }
 
     // Initialize the video color format for input port
@@ -532,6 +575,10 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sParamVP8.nDCTPartitions = 0;
     m_sParamVP8.bErrorResilientMode = OMX_FALSE;
 
+    OMX_INIT_STRUCT(&m_sParamVP8Encoder,OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE);
+    m_sParamVP8Encoder.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
+    m_sParamVP8Encoder.nKeyFrameInterval = 30;
+
     // HEVC specific init
     OMX_INIT_STRUCT(&m_sParamHEVC, OMX_VIDEO_PARAM_HEVCTYPE);
     m_sParamHEVC.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
@@ -551,8 +598,8 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     m_sParamAndroidImageGrid.bEnabled = OMX_FALSE;
     m_sParamAndroidImageGrid.nTileWidth = DEFAULT_TILE_DIMENSION;
     m_sParamAndroidImageGrid.nTileHeight = DEFAULT_TILE_DIMENSION;
-    m_sParamAndroidImageGrid.nGridRows = DEFAULT_TILE_COUNT;
-    m_sParamAndroidImageGrid.nGridCols = DEFAULT_TILE_COUNT;
+    m_sParamAndroidImageGrid.nGridRows = DEFAULT_TILE_ROWS;
+    m_sParamAndroidImageGrid.nGridCols = DEFAULT_TILE_COLS;
 
     OMX_INIT_STRUCT(&m_sParamLTRCount, QOMX_VIDEO_PARAM_LTRCOUNT_TYPE);
     m_sParamLTRCount.nPortIndex = (OMX_U32) PORT_INDEX_OUT;
@@ -603,7 +650,10 @@ OMX_ERRORTYPE omx_venc::component_init(OMX_STRING role)
     OMX_INIT_STRUCT(&m_sParamLinearColorFormat, QOMX_ENABLETYPE);
     m_sParamLinearColorFormat.bEnable = OMX_FALSE;
 
-    m_state                   = OMX_StateLoaded;
+    OMX_INIT_STRUCT(&m_sParamNativeRecorder, QOMX_ENABLETYPE);
+    m_sParamNativeRecorder.bEnable = OMX_FALSE;
+
+    m_state = OMX_StateLoaded;
     m_sExtraData = 0;
 
     if (eRet == OMX_ErrorNone) {
@@ -948,7 +998,21 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                 memcpy(&m_sParamVP8,pParam, sizeof(struct OMX_VIDEO_PARAM_VP8TYPE));
                 break;
             }
-        case (OMX_INDEXTYPE)OMX_IndexParamVideoHevc:
+        case (OMX_INDEXTYPE)OMX_IndexParamVideoAndroidVp8Encoder:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE);
+                OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE* pParam = (OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE*)paramData;
+                OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE vp8_param;
+                DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoAndroidVp8Encoder");
+
+                memcpy(&vp8_param, pParam, sizeof( struct OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE));
+                if (handle->venc_set_param(&vp8_param, (OMX_INDEXTYPE)OMX_IndexParamVideoAndroidVp8Encoder) != true) {
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sParamVP8Encoder, &vp8_param, sizeof(struct OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE));
+                break;
+            }
+            case (OMX_INDEXTYPE)OMX_IndexParamVideoHevc:
             {
                 VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_HEVCTYPE);
                 OMX_VIDEO_PARAM_HEVCTYPE* pParam = (OMX_VIDEO_PARAM_HEVCTYPE*)paramData;
@@ -979,15 +1043,7 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
             }
         case OMX_IndexParamVideoAndroidImageGrid:
             {
-                VALIDATE_OMX_PARAM_DATA(paramData, OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE);
-                DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoAndroidImageGrid");
-                OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE* pParam =
-                    (OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE*)paramData;
-                if (!handle->venc_set_param(paramData, (OMX_INDEXTYPE)OMX_IndexParamVideoAndroidImageGrid)) {
-                    DEBUG_PRINT_ERROR("ERROR: Request for setting image grid enable failed");
-                    return OMX_ErrorUnsupportedSetting;
-                }
-                memcpy(&m_sParamAndroidImageGrid, pParam, sizeof(m_sParamAndroidImageGrid));
+                DEBUG_PRINT_LOW("set_parameter: OMX_IndexParamVideoAndroidImageGrid. Ignore!");
                 break;
             }
         case OMX_IndexParamVideoProfileLevelCurrent:
@@ -1024,6 +1080,8 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                             m_sParamVP8.eLevel);
                 }
                 else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc",\
+                            OMX_MAX_STRINGNAME_SIZE) ||
+                        !strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc.cq",\
                             OMX_MAX_STRINGNAME_SIZE) ||
                         !strncmp((char*)m_nkind, "OMX.qcom.video.encoder.heic",\
                             OMX_MAX_STRINGNAME_SIZE)) {
@@ -1072,7 +1130,8 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                         DEBUG_PRINT_ERROR("ERROR: Setparameter: unknown Index %s", comp_role->cRole);
                         eRet =OMX_ErrorUnsupportedSetting;
                     }
-                } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc",OMX_MAX_STRINGNAME_SIZE)) {
+                } else if (!strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc",OMX_MAX_STRINGNAME_SIZE) ||
+                           !strncmp((char*)m_nkind, "OMX.qcom.video.encoder.hevc.cq",OMX_MAX_STRINGNAME_SIZE)) {
                     if (!strncmp((const char*)comp_role->cRole,"video_encoder.hevc",OMX_MAX_STRINGNAME_SIZE)) {
                         strlcpy((char*)m_cRole,"video_encoder.hevc",OMX_MAX_STRINGNAME_SIZE);
                     } else {
@@ -1769,6 +1828,17 @@ OMX_ERRORTYPE  omx_venc::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     return OMX_ErrorUnsupportedSetting;
                 }
                 memcpy(&m_blurInfo, paramData, sizeof(OMX_QTI_VIDEO_CONFIG_BLURINFO));
+                break;
+            }
+        case OMX_QTIIndexParamNativeRecorder:
+            {
+                VALIDATE_OMX_PARAM_DATA(paramData, QOMX_ENABLETYPE);
+                if (!handle->venc_set_param(paramData,
+                            (OMX_INDEXTYPE)OMX_QTIIndexParamNativeRecorder)) {
+                    DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamNativeRecorder failed");
+                    return OMX_ErrorUnsupportedSetting;
+                }
+                memcpy(&m_sParamNativeRecorder, paramData, sizeof(QOMX_ENABLETYPE));
                 break;
             }
         case OMX_IndexParamVideoSliceFMO:
@@ -2637,6 +2707,12 @@ int omx_venc::dev_handle_output_extradata(void *buffer, int index)
 int omx_venc::dev_set_format(int color)
 {
     return handle->venc_set_format(color);
+}
+
+bool omx_venc::dev_query_cap(struct v4l2_queryctrl &cap)
+
+{
+    return handle->venc_query_cap(cap);
 }
 
 int omx_venc::async_message_process (void *context, void* message)
