@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010-2018, The Linux Foundation. All rights reserved.
+Copyright (c) 2010-2019, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -141,6 +141,8 @@ static const char* MEM_DEVICE = "/dev/ion";
 #define LEGACY_CAM_METADATA_TYPE encoder_media_buffer_type
 #endif
 
+class omx_video;
+void post_message(omx_video *omx, unsigned char id);
 void* message_thread_enc(void *);
 bool is_ubwc_interlaced(private_handle_t *handle);
 
@@ -278,6 +280,7 @@ class omx_video: public qc_omx_component
         virtual bool is_secure_session(void) = 0;
         virtual int dev_handle_output_extradata(void*, int) = 0;
         virtual int dev_set_format(int) = 0;
+        virtual bool dev_query_cap(struct v4l2_queryctrl &) = 0;
         virtual bool dev_is_video_session_supported(OMX_U32 width, OMX_U32 height) = 0;
         virtual bool dev_get_capability_ltrcount(OMX_U32 *, OMX_U32 *, OMX_U32 *) = 0;
         virtual bool dev_get_vui_timing_info(OMX_U32 *) = 0;
@@ -682,6 +685,7 @@ class omx_video: public qc_omx_component
         OMX_VIDEO_PARAM_H263TYPE m_sParamH263;
         OMX_VIDEO_PARAM_AVCTYPE m_sParamAVC;
         OMX_VIDEO_PARAM_VP8TYPE m_sParamVP8;
+        OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE m_sParamVP8Encoder;
         OMX_VIDEO_PARAM_HEVCTYPE m_sParamHEVC;
         QOMX_VIDEO_PARAM_TMETYPE m_sParamTME;
         OMX_U32 tme_payload_version;
@@ -740,6 +744,7 @@ class omx_video: public qc_omx_component
         QOMX_ENABLETYPE m_sParamColorSpaceConversion;
         OMX_VIDEO_PARAM_ANDROID_IMAGEGRIDTYPE m_sParamAndroidImageGrid;
         QOMX_ENABLETYPE m_sParamLinearColorFormat;
+        QOMX_ENABLETYPE m_sParamNativeRecorder;
 
         // fill this buffer queue
         omx_cmd_queue m_ftb_q;

@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2009-2017, The Linux Foundation. All rights reserved.
+Copyright (c) 2009-2017,2019 The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -695,8 +695,18 @@ enum OMX_QCOM_EXTN_INDEXTYPE
 
     OMX_QTIIndexParamCapabilitiesRotationSupport = 0x7F100004,
 
+    OMX_QTIIndexParamCapabilitiesBlurSupport = 0x7F100005,
+
+    OMX_QTIIndexParamCapabilitiesColorSpaceConversionSupport = 0x7F100006,
+
     /* Configure Rectangle Region based ROI info */
     OMX_QTIIndexConfigVideoRoiRectRegionInfo = 0x7F100007,
+
+    OMX_QTIIndexParamNativeRecorder = 0x7F100008,
+
+    OMX_QTIIndexParamVideoDecoderOutputFrameRate = 0x7F100009,
+    /*"OMX.google.android.index.describeHDR10PlusInfo"*/
+    OMX_QTIIndexConfigDescribeHDR10PlusInfo = 0x7F10000a,
 };
 
 /**
@@ -1819,6 +1829,12 @@ typedef struct QOMX_VIDEO_CUSTOM_BUFFERSIZE {
         OMX_U32 nBufferSize;
 } QOMX_VIDEO_CUSTOM_BUFFERSIZE;
 
+typedef struct QOMX_VIDEO_OUTPUT_FRAME_RATE {
+    OMX_U32 nSize;
+    OMX_VERSIONTYPE nVersion;
+    OMX_U32 fps;
+} QOMX_VIDEO_OUTPUT_FRAME_RATE;
+
 #define OMX_QCOM_INDEX_PARAM_VIDEO_SYNCFRAMEDECODINGMODE "OMX.QCOM.index.param.video.SyncFrameDecodingMode"
 #define OMX_QCOM_INDEX_PARAM_INDEXEXTRADATA "OMX.QCOM.index.param.IndexExtraData"
 #define OMX_QCOM_INDEX_PARAM_VIDEO_SLICEDELIVERYMODE "OMX.QCOM.index.param.SliceDeliveryMode"
@@ -1853,6 +1869,7 @@ typedef struct QOMX_VIDEO_CUSTOM_BUFFERSIZE {
 #define OMX_QTI_INDEX_CONFIG_COLOR_ASPECTS "OMX.google.android.index.describeColorAspects"
 #define OMX_QTI_INDEX_CONFIG_VIDEO_GETDSMODE "OMX.QTI.index.config.video.getdsmode"
 #define OMX_QTI_INDEX_PARAM_TME "OMX.QTI.index.param.tme"
+#define OMX_QTI_INDEX_PARAM_NATIVE_RECORDER "OMX.QTI.index.param.nativeRecorder"
 
 typedef enum {
     QOMX_VIDEO_FRAME_PACKING_CHECKERBOARD = 0,

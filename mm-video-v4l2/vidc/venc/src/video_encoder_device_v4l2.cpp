@@ -35,6 +35,9 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "video_encoder_device_v4l2.h"
 #include "omx_video_encoder.h"
 #include "media/msm_vidc_utils.h"
+#ifdef HYPERVISOR
+#include "hypv_intercept.h"
+#endif
 #ifdef USE_ION
 #include <linux/msm_ion.h>
 #endif
@@ -63,6 +66,11 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <utils/Trace.h>
 
 #define YUV_STATS_LIBRARY_NAME "libgpustats.so" // UBWC case: use GPU library
+
+#ifdef HYPERVISOR
+#define ioctl(x, y, z) hypv_ioctl(x, y, z)
+#define poll(x, y, z)  hypv_poll(x, y, z)
+#endif
 
 #undef ALIGN
 #define ALIGN(x, to_align) ((((unsigned long) x) + (to_align - 1)) & ~(to_align - 1))
@@ -180,6 +188,7 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     client_req_turbo_mode  = false;
     intra_period.num_pframes = 29;
     intra_period.num_bframes = 0;
+    mIsNativeRecorder = false;
     m_hdr10meta_enabled = false;
 
     Platform::Config::getInt32(Platform::vidc_enc_log_in,
@@ -222,6 +231,8 @@ venc_dev::venc_dev(class omx_venc *venc_class)
     mIsGridset = false;
     Platform::Config::getInt32(Platform::vidc_enc_linear_color_format,
             (int32_t *)&mUseLinearColorFormat, 0);
+    Platform::Config::getInt32(Platform::vidc_enc_bitrate_savings_enable,
+            (int32_t *)&mBitrateSavingsEnable, 0);
 
     profile_level_converter::init();
 }
@@ -513,7 +524,7 @@ static OMX_ERRORTYPE subscribe_to_events(int fd)
     return eRet;
 }
 
-bool inline venc_dev::venc_query_cap(struct v4l2_queryctrl &cap) {
+bool venc_dev::venc_query_cap(struct v4l2_queryctrl &cap) {
 
     if (ioctl(m_nDriver_fd, VIDIOC_QUERYCTRL, &cap)) {
         DEBUG_PRINT_ERROR("Query caps for id = %u failed", cap.id);
@@ -1634,17 +1645,22 @@ bool venc_dev::venc_open(OMX_U32 codec)
     struct v4l2_control control;
     OMX_STRING device_name = (OMX_STRING)"/dev/video33";
     char property_value[PROPERTY_VALUE_MAX] = {0};
-    char platform_name[PROPERTY_VALUE_MAX] = {0};
     FILE *soc_file = NULL;
     char buffer[10];
 
-    property_get("ro.board.platform", platform_name, "0");
+    property_get("ro.board.platform", m_platform_name, "0");
 
-    if (!strncmp(platform_name, "msm8610", 7)) {
+    if (!strncmp(m_platform_name, "msm8610", 7)) {
         device_name = (OMX_STRING)"/dev/video/q6_enc";
         supported_rc_modes = (RC_ALL & ~RC_CBR_CFR);
     }
-    m_nDriver_fd = open (device_name, O_RDWR);
+
+#ifdef HYPERVISOR
+    m_nDriver_fd = hypv_open(device_name, O_RDWR);
+#else
+    m_nDriver_fd = open(device_name, O_RDWR);
+#endif
+
     if ((int)m_nDriver_fd < 0) {
         DEBUG_PRINT_ERROR("ERROR: Omx_venc::Comp Init Returning failure");
         return false;
@@ -1687,8 +1703,13 @@ bool venc_dev::venc_open(OMX_U32 codec)
         idrperiod.idrperiod = 1;
         minqp = 0;
         maxqp = 51;
-        if (codec == OMX_VIDEO_CodingImageHEIC)
+        if (codec == OMX_VIDEO_CodingImageHEIC) {
+            m_sVenc_cfg.input_width = DEFAULT_TILE_DIMENSION;
+            m_sVenc_cfg.input_height = DEFAULT_TILE_DIMENSION;
+            m_sVenc_cfg.dvs_width = DEFAULT_TILE_DIMENSION;
+            m_sVenc_cfg.dvs_height = DEFAULT_TILE_DIMENSION;
             codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN_STILL_PIC;
+        }
         else
             codec_profile.profile = V4L2_MPEG_VIDC_VIDEO_HEVC_PROFILE_MAIN;
         profile_level.level = V4L2_MPEG_VIDC_VIDEO_HEVC_LEVEL_MAIN_TIER_LEVEL_1;
@@ -1778,6 +1799,18 @@ bool venc_dev::venc_open(OMX_U32 codec)
 
     ret = ioctl(m_nDriver_fd, VIDIOC_S_FMT, &fmt);
     m_sInput_buff_property.datasize=fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
+
+    if (m_codec == OMX_VIDEO_CodingImageHEIC) {
+        if (!venc_set_grid_enable()) {
+            DEBUG_PRINT_ERROR("Failed to enable grid");
+            return false;
+        }
+
+        if (!venc_set_ratectrl_cfg(OMX_Video_ControlRateConstantQuality)) {
+            DEBUG_PRINT_ERROR("Failed to set rate control:CQ");
+            return false;
+        }
+    }
 
     bufreq.memory = V4L2_MEMORY_USERPTR;
     bufreq.count = 2;
@@ -1904,10 +1937,21 @@ void venc_dev::venc_close()
         if (async_thread_created)
             pthread_join(m_tid,NULL);
 
+        if (venc_handle->msg_thread_created) {
+            venc_handle->msg_thread_created = false;
+            venc_handle->msg_thread_stop = true;
+            post_message(venc_handle, omx_video::OMX_COMPONENT_CLOSE_MSG);
+            DEBUG_PRINT_HIGH("omx_video: Waiting on Msg Thread exit");
+            pthread_join(venc_handle->msg_thread_id, NULL);
+        }
         DEBUG_PRINT_HIGH("venc_close X");
         unsubscribe_to_events(m_nDriver_fd);
         close(m_poll_efd);
+#ifdef HYPERVISOR
+        hypv_close(m_nDriver_fd);
+#else
         close(m_nDriver_fd);
+#endif
         m_nDriver_fd = -1;
     }
 
@@ -2063,6 +2107,12 @@ bool venc_dev::venc_get_buf_req(OMX_U32 *min_buff_count,
         if (metadatamode && mBatchSize) {
             minCount = MAX_V4L2_BUFS;
             DEBUG_PRINT_LOW("Set buffer count = %d as metadata mode and batchmode enabled", minCount);
+        }
+
+        // reset min count to 4 for HEIC cases
+        if (mIsGridset) {
+            minCount = 4;
+            DEBUG_PRINT_LOW("Set buffer count = %d for HEIC", minCount);
         }
 
         minCount = MAX((unsigned int)control.value, minCount);
@@ -2525,17 +2575,7 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
             }
         case (OMX_INDEXTYPE)OMX_IndexParamVideoAndroidImageGrid:
             {
-                DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoAndroidImageGrid");
-
-                if (m_codec != OMX_VIDEO_CodingImageHEIC) {
-                    DEBUG_PRINT_ERROR("OMX_IndexParamVideoAndroidImageGrid is only set for HEIC (HW tiling)");
-                    return true;
-                }
-
-                if (!venc_set_grid_enable()) {
-                    DEBUG_PRINT_ERROR("ERROR: Failed to set grid-enable");
-                    return false;
-                }
+                DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoAndroidImageGrid. Ignore!");
                 break;
             }
         case OMX_IndexParamVideoIntraRefresh:
@@ -2553,6 +2593,24 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                 }
 
                 break;
+            }
+        case OMX_IndexParamVideoAndroidVp8Encoder:
+            {
+                DEBUG_PRINT_LOW("venc_set_param: OMX_IndexParamVideoAndroidVp8Encoder");
+                OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE *vp8EncodeParams =
+                    (OMX_VIDEO_PARAM_ANDROID_VP8ENCODERTYPE *)paramData;
+
+                if (vp8EncodeParams->nPortIndex == (OMX_U32) PORT_INDEX_OUT) {
+                     int pFrames = vp8EncodeParams->nKeyFrameInterval - 1;
+                     if (venc_set_intra_period(pFrames, 0) == false) {
+                         DEBUG_PRINT_ERROR("ERROR: Request for setting intra period failed");
+                         return false;
+                     }
+
+                 } else {
+                     DEBUG_PRINT_ERROR("ERROR: Invalid Port Index for OMX_IndexParamVideoAndroidVp8Encoder");
+                 }
+                 break;
             }
         case OMX_IndexParamVideoErrorCorrection:
             {
@@ -2972,6 +3030,13 @@ bool venc_dev::venc_set_param(void *paramData, OMX_INDEXTYPE index)
                     DEBUG_PRINT_ERROR("ERROR: Setting OMX_QTIIndexParamVideoEnableBlur failed");
                     return false;
                 }
+                break;
+            }
+        case OMX_QTIIndexParamNativeRecorder:
+            {
+                QOMX_ENABLETYPE *pParam = (QOMX_ENABLETYPE *)paramData;
+                mIsNativeRecorder = pParam->bEnable == OMX_TRUE;
+                DEBUG_PRINT_INFO("Native recorder encode session %d", pParam->bEnable);
                 break;
             }
         default:
@@ -4097,7 +4162,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
     struct v4l2_buffer buf;
     struct v4l2_requestbuffers bufreq;
     struct v4l2_plane plane[VIDEO_MAX_PLANES];
-    int rc = 0, extra_idx;
+    int rc = 0, extra_idx, c2d_enabled = 0;
     bool interlace_flag = false;
     struct OMX_BUFFERHEADERTYPE *bufhdr;
     LEGACY_CAM_METADATA_TYPE * meta_buf = NULL;
@@ -4401,6 +4466,13 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                     if (getMetaData(handle, GET_UBWC_CR_STATS_INFO, (void *)cam_ubwc_stats) == 0) {
                         if (cam_ubwc_stats[0].bDataValid) {
                             switch (cam_ubwc_stats[0].version) {
+                            case UBWC_1_0:
+                                {
+                                    // Camera hw doesn't support UBWC stats in trinket and sends
+                                    // a hardcoded compression factor in nCRStatsTile32
+                                    compression_ratio = cam_ubwc_stats[0].ubwc_stats.nCRStatsTile32;
+                                }
+                                break;
                             case UBWC_2_0:
                             case UBWC_3_0:
                                 {
@@ -4466,6 +4538,7 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
                 // color_format == 1 ==> RGBA to YUV Color-converted buffer
                 // Buffers color-converted via C2D have 601-Limited color
                 if (!streaming[OUTPUT_PORT]) {
+                    c2d_enabled = 1;
                     DEBUG_PRINT_HIGH("Setting colorspace 601-L for Color-converted buffer");
                     venc_set_colorspace(MSM_VIDC_BT601_6_625, 0 /*range-limited*/,
                             MSM_VIDC_TRANSFER_601_6_525, MSM_VIDC_MATRIX_601_6_525);
@@ -4487,9 +4560,9 @@ bool venc_dev::venc_empty_buf(void *buffer, void *pmem_data_buf, unsigned index,
         }
     }
 
-    if (!streaming[OUTPUT_PORT] &&
+    if (!streaming[OUTPUT_PORT] && (c2d_enabled ||
         (m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_TP10_UBWC &&
-         m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_UBWC)) {
+         m_sVenc_cfg.inputformat != V4L2_PIX_FMT_NV12_UBWC))) {
         if (bframe_implicitly_enabled) {
             DEBUG_PRINT_HIGH("Disabling implicitly enabled B-frames");
             intra_period.num_pframes = nPframes_cache;
@@ -4948,7 +5021,7 @@ bool venc_dev::venc_set_extradata(OMX_U32 extra_data, OMX_BOOL enable)
         case OMX_ExtraDataVideoLTRInfo:
             control.value = V4L2_MPEG_VIDC_EXTRADATA_LTR;
             break;
-#if NEED_TO_REVISIT
+#ifdef V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP
         case OMX_ExtraDataFrameDimension:
             control.value = V4L2_MPEG_VIDC_EXTRADATA_INPUT_CROP;
             break;
@@ -5359,13 +5432,14 @@ bool venc_dev::venc_reconfigure_intra_period()
                     !client_req_disable_bframe;
 
     DEBUG_PRINT_LOW("B-frame enablement = %u; Conditions for Resolution = %u, FPS = %u,"
-                     " Operating rate = %u, Layer condition = %u,"
-                     " LTR = %u, RC = %u Codec/Profile = %u Client request to disable = %u LowLatency : %u\n",
+                     "Operating rate = %u, Layer condition = %u, LTR = %u, RC = %u"
+                     "Codec/Profile = %u Client request to disable = %u LowLatency : %u \n isNativeRecorder : %u",
                      enableBframes, isValidResolution, isValidFps, isValidOpRate,
                      isValidLayerCount, isValidLtrSetting, isValidRcMode, isValidCodec, client_req_disable_bframe,
-                     low_latency_mode);
+                     low_latency_mode, mIsNativeRecorder);
 
-    if (enableBframes && intra_period.num_bframes == 0 && intra_period.num_pframes > VENC_BFRAME_MAX_COUNT) {
+    if (enableBframes && intra_period.num_bframes == 0 && intra_period.num_pframes > VENC_BFRAME_MAX_COUNT
+            && mIsNativeRecorder) {
         intra_period.num_bframes = VENC_BFRAME_MAX_COUNT;
         nPframes_cache = intra_period.num_pframes;
         intra_period.num_pframes = intra_period.num_pframes / (1 + intra_period.num_bframes);
@@ -6390,6 +6464,16 @@ bool venc_dev::venc_set_ratectrl_cfg(OMX_VIDEO_CONTROLRATETYPE eControlRate)
         rate_ctrl.rcmode = control.value;
     }
 
+    {
+        DEBUG_PRINT_LOW("Set bitrate savings %d", mBitrateSavingsEnable);
+        control.id = V4L2_CID_MPEG_VIDC_VENC_BITRATE_SAVINGS;
+        control.value = mBitrateSavingsEnable;
+        rc = ioctl(m_nDriver_fd, VIDIOC_S_CTRL, &control);
+        if (rc) {
+            DEBUG_PRINT_HIGH("Non-Fatal: Request to set bitrate savings failed");
+        }
+    }
+
 #ifdef _VQZIP_
     if (eControlRate == OMX_Video_ControlRateVariable && (supported_rc_modes & RC_VBR_CFR)
             && m_sVenc_cfg.codectype == V4L2_PIX_FMT_H264) {
@@ -7182,6 +7266,12 @@ void venc_dev::venc_get_consumer_usage(OMX_U32* usage) {
         DEBUG_PRINT_INFO("Clear UBWC and set HEIF consumer usage bit");
         *usage &= ~GRALLOC_USAGE_PRIVATE_ALLOC_UBWC;
         *usage |= GRALLOC_USAGE_PRIVATE_HEIF_VIDEO;
+    }
+
+    if (!strncmp(m_platform_name, "trinket", 7)) {
+        if (m_sVenc_cfg.input_width < 640 || m_sVenc_cfg.input_height < 480) {
+            *usage &= ~GRALLOC_USAGE_PRIVATE_ALLOC_UBWC;
+        }
     }
 
     DEBUG_PRINT_INFO("venc_get_consumer_usage 0x%x", *usage);

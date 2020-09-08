@@ -171,16 +171,25 @@ bool C2DColorConverter::setResolution(size_t srcWidth, size_t srcHeight,
         mSrcStride = srcStride;
         mDstWidth = dstWidth;
         mDstHeight = dstHeight;
-        mSrcFormat = srcFormat;
+        if (srcFormat == RGBA8888 &&
+#ifdef __LIBGBM__
+            flags & GBM_BO_USAGE_UBWC_ALIGNED_QTI) {
+#else
+            flags & private_handle_t::PRIV_FLAGS_UBWC_ALIGNED) {
+#endif
+            mSrcFormat = RGBA8888_UBWC;
+        } else {
+            mSrcFormat = srcFormat;
+        }
         mDstFormat = dstFormat;
-        mSrcSize = calcSize(srcFormat, srcWidth, srcHeight);
+        mSrcSize = calcSize(mSrcFormat, srcWidth, srcHeight);
         mDstSize = calcSize(dstFormat, dstWidth, dstHeight);
-        mSrcYSize = calcYSize(srcFormat, srcWidth, srcHeight);
+        mSrcYSize = calcYSize(mSrcFormat, srcWidth, srcHeight);
         mDstYSize = calcYSize(dstFormat, dstWidth, dstHeight);
 
         mFlags = flags; // can be used for rotation
 
-        retval = getDummySurfaceDef(srcFormat, srcWidth, srcHeight, true);
+        retval = getDummySurfaceDef(mSrcFormat, srcWidth, srcHeight, true);
         retval |= getDummySurfaceDef(dstFormat, dstWidth, dstHeight, false);
 
         if (retval == 0) {
@@ -307,6 +316,7 @@ bool C2DColorConverter::isYUVSurface(ColorConvertFormat format)
         case NV12_128m:
         case NV12_UBWC:
         case TP10_UBWC:
+        case CbYCrY:
             return true;
         default:
             return false;
@@ -497,6 +507,8 @@ uint32_t C2DColorConverter::getC2DFormat(ColorConvertFormat format, bool isSourc
             return C2D_COLOR_FORMAT_420_NV12 | C2D_FORMAT_UBWC_COMPRESSED;
         case TP10_UBWC:
             return C2D_COLOR_FORMAT_420_TP10 | C2D_FORMAT_UBWC_COMPRESSED;
+        case CbYCrY:
+            return C2D_COLOR_FORMAT_422_UYVY;
         default:
             ALOGW("%s: Format not supported , %d", __FUNCTION__, format);
             return -1;
@@ -531,6 +543,10 @@ size_t C2DColorConverter::calcStride(ColorConvertFormat format, size_t width)
             return VENUS_Y_STRIDE(COLOR_FMT_NV12_UBWC, width);
         case TP10_UBWC:
             return VENUS_Y_STRIDE(COLOR_FMT_NV12_BPP10_UBWC, width);
+        case CbYCrY:
+            return ALIGN(width*2, ALIGN64);
+        case RGBA8888_UBWC:
+            return VENUS_RGB_STRIDE(COLOR_FMT_RGBA8888_UBWC, width);
         default:
             ALOGW("%s: Format not supported , %d", __FUNCTION__, format);
             return 0;
@@ -650,6 +666,12 @@ size_t C2DColorConverter::calcSize(ColorConvertFormat format, size_t width, size
             break;
         case TP10_UBWC:
             size = VENUS_BUFFER_SIZE(COLOR_FMT_NV12_BPP10_UBWC, width, height);
+            break;
+        case CbYCrY:
+            size = ALIGN(ALIGN(width * 2, ALIGN64) * height, ALIGN4K);
+            break;
+        case RGBA8888_UBWC:
+            size = VENUS_BUFFER_SIZE(COLOR_FMT_RGBA8888_UBWC, width, height);
             break;
         default:
             ALOGW("%s: Format not supported , %d", __FUNCTION__, format);
@@ -778,6 +800,7 @@ size_t C2DColorConverter::calcSizeAlign(ColorConvertFormat format) {
         case NV12_128m:
         case NV12_UBWC:
         case TP10_UBWC:
+        case RGBA8888_UBWC:
           return ALIGN4K;
         default:
           ALOGW("%s: unknown format (%d) passed for size alignment number",

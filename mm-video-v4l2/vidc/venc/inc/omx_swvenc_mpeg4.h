@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
+Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are
@@ -83,6 +83,7 @@ class omx_venc: public omx_video
         bool dev_get_dimensions(OMX_U32 ,OMX_U32 *,OMX_U32 *);
         void dev_set_extradata_cookie(void *);
         int dev_set_format(int);
+        bool dev_query_cap(struct v4l2_queryctrl &);
 
         static SWVENC_STATUS swvenc_empty_buffer_done_cb
         (
@@ -198,6 +199,7 @@ class omx_venc: public omx_video
            OMX_U32 port
         );
         int swvenc_input_log_buffers(const char *buffer, int bufferlen);
+        int swvenc_input_log_rotated_buffers(const char *buffer, int bufferlen);
         bool dev_get_hevc_profile(OMX_U32*) { return false; }
         bool dev_handle_client_input_extradata(void*) { return false; }
         void dev_get_color_format_as_string(char *, int, unsigned) {};
