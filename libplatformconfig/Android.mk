@@ -2,6 +2,8 @@ ifneq ($(QCPATH),)
 
 LOCAL_PATH := $(call my-dir)
 LOCAL_DIR_PATH:= $(call my-dir)
+include $(CLEAR_VARS)
+
 LOCAL_CFLAGS := $(COMMON_CFLAGS) $(libplatformconfig-def)
 
 LOCAL_SHARED_LIBRARIES += \
