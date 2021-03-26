@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010 - 2020, The Linux Foundation. All rights reserved.
+Copyright (c) 2010 - 2021, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -3013,7 +3013,8 @@ OMX_ERRORTYPE omx_vdec::get_supported_profile_level(OMX_VIDEO_PARAM_PROFILELEVEL
     }
     if (m_disable_hdr & DEC_HDR_DISABLE_FLAG) {
         if (output_capability == V4L2_PIX_FMT_VP9) {
-            if (profileLevelType->eProfile == OMX_VIDEO_VP9Profile2HDR || profileLevelType->eProfile == OMX_VIDEO_VP9Profile2HDR10Plus)
+            if (profileLevelType->eProfile == OMX_VIDEO_VP9Profile2HDR || profileLevelType->eProfile == OMX_VIDEO_VP9Profile2HDR10Plus
+                || profileLevelType->eProfile == OMX_VIDEO_VP9Profile2)
                 hdr_supported = false;
         }
         if (output_capability == V4L2_PIX_FMT_HEVC) {
@@ -6148,9 +6149,10 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
                 output_capability == V4L2_PIX_FMT_MPEG2)
             is_duplicate_ts_valid = false;
 
-        time_stamp_dts.get_next_timestamp(buffer,
-                is_interlaced && is_duplicate_ts_valid && !is_mbaff);
-
+        if (buffer->nFilledLen > 0) {
+            time_stamp_dts.get_next_timestamp(buffer,
+                    is_interlaced && is_duplicate_ts_valid && !is_mbaff);
+        }
     }
     VIDC_TRACE_INT_LOW("FBD-TS", buffer->nTimeStamp / 1000);
 
