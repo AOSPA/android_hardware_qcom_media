@@ -32,7 +32,9 @@ ifeq ($(GENERIC_ODM_IMAGE),true)
 
 else ifneq ($(TARGET_FWK_SUPPORTS_AV_VALUEADDS),false)
     $(warning "Enabling codec2.0 non-audio SW only for non-generic odm build variant")
+    ifeq (,$(filter media-legacy, $(TARGET_COMMON_QTI_COMPONENTS)))
     DEVICE_MANIFEST_FILE += hardware/qcom/media/conf_files/msmnile/c2_manifest.xml
+    endif
     PRODUCT_PROPERTY_OVERRIDES += debug.stagefright.omx_default_rank=0
     PRODUCT_COPY_FILES += \
       device/qcom/common/media/media_profiles.xml:$(TARGET_COPY_OUT_ODM)/etc/media_profiles_V1_0.xml \
