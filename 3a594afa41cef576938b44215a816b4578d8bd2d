@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "0ab0139c_2359e4fa",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 2
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000541
+      },
+      "writtenOn": "2021-03-27T18:06:02Z",
+      "side": 1,
+      "message": "fixes\n\ngetDeviceHalManifest: -2147483648 VINTF parse error: Cannot add manifest fragment /vendor/etc/vintf/manifest/c2_manifest_vendor.xml:HAL \"android.hardware.media.c2\" has a conflict.\n\nfor me on op7t",
+      "revId": "3a594afa41cef576938b44215a816b4578d8bd2d",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
