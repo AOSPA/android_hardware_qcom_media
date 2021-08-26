@@ -1,5 +1,5 @@
 /*--------------------------------------------------------------------------
-Copyright (c) 2010 - 2019, The Linux Foundation. All rights reserved.
+Copyright (c) 2010 - 2020, The Linux Foundation. All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -362,45 +362,19 @@ void* async_message_thread (void *input)
 void* message_thread_dec(void *input)
 {
     omx_vdec* omx = reinterpret_cast<omx_vdec*>(input);
-    unsigned char id;
-    int n;
-
-    fd_set readFds;
     int res = 0;
-    struct timeval tv;
 
     DEBUG_PRINT_HIGH("omx_vdec: message thread start");
     prctl(PR_SET_NAME, (unsigned long)"VideoDecMsgThread", 0, 0, 0);
     while (!omx->message_thread_stop) {
-
-        tv.tv_sec = 2;
-        tv.tv_usec = 0;
-
-        FD_ZERO(&readFds);
-        FD_SET(omx->m_pipe_in, &readFds);
-
-        res = select(omx->m_pipe_in + 1, &readFds, NULL, NULL, &tv);
-        if (res < 0) {
-            DEBUG_PRINT_ERROR("select() ERROR: %s", strerror(errno));
+        res = omx->signal.wait(2 * 1000000000);
+        if (res == ETIMEDOUT || omx->message_thread_stop) {
             continue;
-        } else if (res == 0 /*timeout*/ || omx->message_thread_stop) {
-            continue;
-        }
-
-        n = read(omx->m_pipe_in, &id, 1);
-
-        if (0 == n) {
+        } else if (res) {
+            DEBUG_PRINT_ERROR("omx_vdec: message_thread_dec wait on condition failed, exiting");
             break;
         }
-
-        if (1 == n) {
-            omx->process_event_cb(omx, id);
-        }
-
-        if ((n < 0) && (errno != EINTR)) {
-            DEBUG_PRINT_LOW("ERROR: read from pipe failed, ret %d errno %d", n, errno);
-            break;
-        }
+        omx->process_event_cb(omx);
     }
     DEBUG_PRINT_HIGH("omx_vdec: message thread stop");
     return 0;
@@ -408,14 +382,8 @@ void* message_thread_dec(void *input)
 
 void post_message(omx_vdec *omx, unsigned char id)
 {
-    int ret_value;
-    DEBUG_PRINT_LOW("omx_vdec: post_message %d pipe out%d", id,omx->m_pipe_out);
-    ret_value = write(omx->m_pipe_out, &id, 1);
-    if (ret_value <= 0) {
-        DEBUG_PRINT_ERROR("post_message to pipe failed : %s", strerror(errno));
-    } else {
-        DEBUG_PRINT_LOW("post_message to pipe done %d",ret_value);
-    }
+    DEBUG_PRINT_LOW("omx_vdec: post_message %d", id);
+    omx->signal.signal();
 }
 
 // omx_cmd_queue destructor
@@ -678,8 +646,6 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     m_is_display_session(false),
     m_buffer_error(false)
 {
-    m_pipe_in = -1;
-    m_pipe_out = -1;
     m_poll_efd = -1;
     drv_ctx.video_driver_fd = -1;
     drv_ctx.extradata_info.ion.fd_ion_data.fd = -1;
@@ -724,11 +690,18 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
     property_value[0] = '\0';
     property_get("vendor.vidc.dec.log.in", property_value, "0");
     m_debug.in_buffer_log = atoi(property_value);
+    DEBUG_PRINT_HIGH("vendor.vidc.dec.log.in value is %d", m_debug.in_buffer_log);
 
     property_value[0] = '\0';
     property_get("vendor.vidc.dec.log.out", property_value, "0");
     m_debug.out_buffer_log = atoi(property_value);
     snprintf(m_debug.log_loc, PROPERTY_VALUE_MAX, "%s", BUFFER_LOG_LOC);
+    DEBUG_PRINT_HIGH("vendor.vidc.dec.log.out value is %d", m_debug.out_buffer_log);
+
+    property_value[0] = '\0';
+    property_get("vendor.vidc.dec.log.cc.out", property_value, "0");
+    m_debug.out_cc_buffer_log = atoi(property_value);
+    DEBUG_PRINT_HIGH("vendor.vidc.dec.log.cc.out value is %d", m_debug.out_buffer_log);
 
     property_value[0] = '\0';
     property_get("vendor.vidc.dec.meta.log.out", property_value, "0");
@@ -760,6 +733,11 @@ omx_vdec::omx_vdec(): m_error_propogated(false),
         m_drc_enable = true;
         DEBUG_PRINT_HIGH("DRC enabled");
     }
+
+    struct timeval te;
+    gettimeofday(&te, NULL);
+    m_debug.session_id = te.tv_sec*1000LL + te.tv_usec/1000;
+    m_debug.seq_count = 0;
 
 #ifdef _UBWC_
     property_value[0] = '\0';
@@ -972,10 +950,6 @@ omx_vdec::~omx_vdec()
         DEBUG_PRINT_HIGH("Waiting on OMX Msg Thread exit");
         pthread_join(msg_thread_id,NULL);
     }
-    close(m_pipe_in);
-    close(m_pipe_out);
-    m_pipe_in = -1;
-    m_pipe_out = -1;
     DEBUG_PRINT_HIGH("Waiting on OMX Async Thread exit");
     if(eventfd_write(m_poll_efd, 1)) {
          DEBUG_PRINT_ERROR("eventfd_write failed for fd: %d, errno = %d, force stop async_thread", m_poll_efd, errno);
@@ -1441,7 +1415,7 @@ int omx_vdec::decide_downscalar()
    None.
 
    ========================================================================== */
-void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
+void omx_vdec::process_event_cb(void *ctxt)
 {
     unsigned long p1; // Parameter - 1
     unsigned long p2; // Parameter - 2
@@ -1481,8 +1455,7 @@ void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
 
         /*process message if we have one*/
         if (qsize > 0) {
-            id = ident;
-            switch (id) {
+            switch (ident) {
                 case OMX_COMPONENT_GENERATE_EVENT:
                     if (pThis->m_cb.EventHandler) {
                         switch (p1) {
@@ -1903,6 +1876,10 @@ void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
                                             fclose(pThis->m_debug.outfile);
                                             pThis->m_debug.outfile = NULL;
                                         }
+                                        if (pThis->m_debug.ccoutfile) {
+                                            fclose(pThis->m_debug.ccoutfile);
+                                            pThis->m_debug.ccoutfile = NULL;
+                                        }
                                         if (pThis->m_debug.out_ymeta_file) {
                                             fclose(pThis->m_debug.out_ymeta_file);
                                             pThis->m_debug.out_ymeta_file = NULL;
@@ -1911,6 +1888,7 @@ void omx_vdec::process_event_cb(void *ctxt, unsigned char id)
                                             fclose(pThis->m_debug.out_uvmeta_file);
                                             pThis->m_debug.out_uvmeta_file = NULL;
                                         }
+                                        pThis->m_debug.seq_count++;
 
                                         if (pThis->secure_mode && pThis->m_cb.EventHandler && pThis->in_reconfig) {
                                             pThis->prefetchNewBuffers(true);
@@ -2098,22 +2076,47 @@ int omx_vdec::log_input_buffers(const char *buffer_addr, int buffer_len, uint64_
     return 0;
 }
 
+int omx_vdec::log_cc_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
+
+    if (!client_buffers.is_color_conversion_enabled() ||
+        !m_debug.out_cc_buffer_log || !buffer || !buffer->nFilledLen)
+        return 0;
+
+    if (m_debug.out_cc_buffer_log && !m_debug.ccoutfile) {
+        snprintf(m_debug.ccoutfile_name, OMX_MAX_STRINGNAME_SIZE, "%s/output_cc_%d_%d_%p_%" PRId64 "_%d.yuv",
+                m_debug.log_loc, drv_ctx.video_resolution.frame_width, drv_ctx.video_resolution.frame_height, this,
+                m_debug.session_id, m_debug.seq_count);
+        m_debug.ccoutfile = fopen (m_debug.ccoutfile_name, "ab");
+        if (!m_debug.ccoutfile) {
+            DEBUG_PRINT_HIGH("Failed to open output file: %s for logging", m_debug.log_loc);
+            m_debug.ccoutfile_name[0] = '\0';
+            return -1;
+        }
+        DEBUG_PRINT_HIGH("Opened CC output file: %s for logging", m_debug.ccoutfile_name);
+    }
+
+    fwrite(buffer->pBuffer, buffer->nFilledLen, 1, m_debug.ccoutfile);
+    return 0;
+}
+
 int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
     int buf_index = 0;
     char *temp = NULL;
-
+    char *bufaddr = NULL;
     if (!(m_debug.out_buffer_log || m_debug.out_meta_buffer_log) || !buffer || !buffer->nFilledLen)
         return 0;
 
     if (m_debug.out_buffer_log && !m_debug.outfile) {
-        snprintf(m_debug.outfile_name, OMX_MAX_STRINGNAME_SIZE, "%s/output_%d_%d_%p.yuv",
-                m_debug.log_loc, drv_ctx.video_resolution.frame_width, drv_ctx.video_resolution.frame_height, this);
+        snprintf(m_debug.outfile_name, OMX_MAX_STRINGNAME_SIZE, "%s/output_%d_%d_%p_%" PRId64 "_%d.yuv",
+                m_debug.log_loc, drv_ctx.video_resolution.frame_width, drv_ctx.video_resolution.frame_height, this,
+                m_debug.session_id, m_debug.seq_count);
         m_debug.outfile = fopen (m_debug.outfile_name, "ab");
         if (!m_debug.outfile) {
             DEBUG_PRINT_HIGH("Failed to open output file: %s for logging", m_debug.log_loc);
             m_debug.outfile_name[0] = '\0';
             return -1;
         }
+        DEBUG_PRINT_HIGH("Opened output file: %s for logging", m_debug.outfile_name);
     }
 
     if (m_debug.out_meta_buffer_log && !m_debug.out_ymeta_file && !m_debug.out_uvmeta_file) {
@@ -2132,7 +2135,18 @@ int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
     }
 
     buf_index = buffer - m_out_mem_ptr;
-    temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr;
+    bufaddr = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr;
+    if (dynamic_buf_mode && !secure_mode) {
+        bufaddr = (char *)mmap(NULL, drv_ctx.op_buf.buffer_size,
+                                PROT_READ|PROT_WRITE, MAP_SHARED,
+                                drv_ctx.ptr_outputbuffer[buf_index].pmem_fd,0);
+        //mmap returns (void *)-1 on failure and sets error code in errno.
+        if (bufaddr == MAP_FAILED) {
+            DEBUG_PRINT_ERROR("mmap failed - errno: %d", errno);
+            return -1;
+        }
+    }
+    temp = bufaddr;
 
     if (drv_ctx.output_format == VDEC_YUV_FORMAT_NV12_UBWC ||
             drv_ctx.output_format == VDEC_YUV_FORMAT_NV12_TP10_UBWC) {
@@ -2164,13 +2178,12 @@ int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
             y_meta_plane = MSM_MEDIA_ALIGN(y_meta_stride * y_meta_scanlines, 4096);
             y_plane = MSM_MEDIA_ALIGN(y_stride * y_sclines, 4096);
 
-            temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr;
             for (i = 0; i < y_meta_scanlines; i++) {
                  bytes_written = fwrite(temp, y_meta_stride, 1, m_debug.out_ymeta_file);
                  temp += y_meta_stride;
             }
 
-            temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr + y_meta_plane + y_plane;
+            temp = bufaddr + y_meta_plane + y_plane;
             for(i = 0; i < uv_meta_scanlines; i++) {
                 bytes_written += fwrite(temp, uv_meta_stride, 1, m_debug.out_uvmeta_file);
                 temp += uv_meta_stride;
@@ -2194,12 +2207,17 @@ int omx_vdec::log_output_buffers(OMX_BUFFERHEADERTYPE *buffer) {
              bytes_written = fwrite(temp, drv_ctx.video_resolution.frame_width, 1, m_debug.outfile);
              temp += stride;
         }
-        temp = (char *)drv_ctx.ptr_outputbuffer[buf_index].bufferaddr + stride * scanlines;
+        temp = bufaddr + stride * scanlines;
         int stride_c = stride;
         for(i = 0; i < drv_ctx.video_resolution.frame_height/2; i++) {
             bytes_written += fwrite(temp, drv_ctx.video_resolution.frame_width, 1, m_debug.outfile);
             temp += stride_c;
         }
+    }
+
+    if (dynamic_buf_mode && !secure_mode) {
+        munmap(drv_ctx.ptr_outputbuffer[buf_index].bufferaddr,
+              drv_ctx.ptr_outputbuffer[buf_index].mmaped_size);
     }
     return 0;
 }
@@ -2801,20 +2819,13 @@ OMX_ERRORTYPE omx_vdec::component_init(OMX_STRING role)
             }
         }
 
-        if (pipe(fds)) {
-            DEBUG_PRINT_ERROR("pipe creation failed");
-            eRet = OMX_ErrorInsufficientResources;
-        } else {
-            m_pipe_in = fds[0];
-            m_pipe_out = fds[1];
-            msg_thread_created = true;
-            r = pthread_create(&msg_thread_id,0,message_thread_dec,this);
+        msg_thread_created = true;
+        r = pthread_create(&msg_thread_id,0,message_thread_dec,this);
 
-            if (r < 0) {
-                DEBUG_PRINT_ERROR("component_init(): message_thread_dec creation failed");
-                msg_thread_created = false;
-                eRet = OMX_ErrorInsufficientResources;
-            }
+        if (r < 0) {
+            DEBUG_PRINT_ERROR("component_init(): message_thread_dec creation failed");
+            msg_thread_created = false;
+            eRet = OMX_ErrorInsufficientResources;
         }
     }
 
@@ -5311,6 +5322,12 @@ OMX_ERRORTYPE  omx_vdec::set_parameter(OMX_IN OMX_HANDLETYPE     hComp,
                     DEBUG_PRINT_ERROR("Failed to set input buffer size");
                     eRet = OMX_ErrorUnsupportedSetting;
                 } else {
+                    if (pParam->nBufferSize != drv_ctx.ip_buf.buffer_size) {
+                        vdec_allocatorproperty *buffer_prop = &drv_ctx.ip_buf;
+                        drv_ctx.ip_buf.buffer_size = (pParam->nBufferSize + buffer_prop->alignment - 1) &
+                                (~(buffer_prop->alignment - 1));
+                        eRet = set_buffer_req(buffer_prop);
+                    }
                     eRet = get_buffer_req(&drv_ctx.ip_buf);
                     if (eRet == OMX_ErrorNone) {
                         m_custom_buffersize.input_buffersize = drv_ctx.ip_buf.buffer_size;
@@ -8407,6 +8424,10 @@ OMX_ERRORTYPE  omx_vdec::component_deinit(OMX_IN OMX_HANDLETYPE hComp)
         fclose(m_debug.outfile);
         m_debug.outfile = NULL;
     }
+    if (m_debug.ccoutfile) {
+        fclose(m_debug.ccoutfile);
+        m_debug.ccoutfile = NULL;
+    }
     if (m_debug.out_ymeta_file) {
         fclose(m_debug.out_ymeta_file);
         m_debug.out_ymeta_file = NULL;
@@ -9123,7 +9144,8 @@ OMX_ERRORTYPE omx_vdec::fill_buffer_done(OMX_HANDLETYPE hComp,
         }
 
         if (il_buffer) {
-            log_output_buffers(il_buffer);
+            log_output_buffers(buffer);
+            log_cc_output_buffers(il_buffer);
             if (dynamic_buf_mode) {
                 unsigned int nPortIndex = 0;
                 nPortIndex = buffer-((OMX_BUFFERHEADERTYPE *)client_buffers.get_il_buf_hdr());
