@@ -51,7 +51,7 @@ ifeq ($(call is-board-platform-in-list, $(MASTER_SIDE_CP_TARGET_LIST)),true)
 libmm-vdec-def += -DMASTER_SIDE_CP
 endif
 
-ifeq ($(call is-platform-sdk-version-at-least,27),true) # O-MR1
+ifdef IS_AT_LEAST_OPM1 # O-MR1
 libmm-vdec-def += -D_ANDROID_O_MR1_DIVX_CHANGES
 endif
 
@@ -78,12 +78,12 @@ endif
 # Common Dependencies
 libmm-vdec-add-dep := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr
 
-ifeq ($(call is-platform-sdk-version-at-least, 19),true)
+ifeq (T,T)  # TODO: Obsolete, please remove
 # This feature is enabled for Android KK+
 libmm-vdec-def += -DADAPTIVE_PLAYBACK_SUPPORTED
 endif
 
-ifeq ($(call is-platform-sdk-version-at-least, 22),true)
+ifeq (T,T)  # TODO: Obsolete, please remove
 # This feature is enabled for Android LMR1
 libmm-vdec-def += -DFLEXYUV_SUPPORTED
 endif
