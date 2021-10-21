@@ -24,7 +24,7 @@ else
 OMXCORE_CFLAGS += -D_DEFAULT_
 endif
 
-ifeq ($(call is-platform-sdk-version-at-least,27),true) # O-MR1
+ifdef IS_AT_LEAST_OPM1 # O-MR1
 OMXCORE_CFLAGS += -D_ANDROID_O_MR1_DIVX_CHANGES
 endif
 
