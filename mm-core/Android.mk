@@ -82,7 +82,7 @@ LOCAL_NOTICE_FILE       := $(LOCAL_PATH)/../LICENSE
 LOCAL_MODULE_TAGS       := optional
 LOCAL_VENDOR_MODULE     := true
 LOCAL_SHARED_LIBRARIES  := liblog libdl libcutils
-ifeq ($(call is-board-platform-in-list, $(MSM_VIDC_TARGET_LIST)),true)
+ifneq (,$(call is-board-platform-in-list2, $(MSM_VIDC_TARGET_LIST)))
 LOCAL_SHARED_LIBRARIES  += libplatformconfig
 endif
 LOCAL_CFLAGS            := $(OMXCORE_CFLAGS)
@@ -120,7 +120,7 @@ LOCAL_NOTICE_FILE       := $(LOCAL_PATH)/../LICENSE
 LOCAL_MODULE_TAGS       := optional
 LOCAL_VENDOR_MODULE     := true
 LOCAL_SHARED_LIBRARIES  := liblog libdl libcutils
-ifeq ($(call is-board-platform-in-list, $(MSM_VIDC_TARGET_LIST)),true)
+ifneq (,$(call is-board-platform-in-list2, $(MSM_VIDC_TARGET_LIST)))
 LOCAL_SHARED_LIBRARIES  += libplatformconfig
 endif
 LOCAL_CFLAGS            := $(OMXCORE_CFLAGS)
