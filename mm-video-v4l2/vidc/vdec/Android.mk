@@ -32,6 +32,7 @@ endif
 TARGETS_THAT_USE_HEVC_ADSP_HEAP := msm8226 msm8974
 TARGETS_THAT_HAVE_VENUS_HEVC := apq8084 msm8994 msm8996
 TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8953 msm8998 sdm660 apq8098_latv
+TARGETS_THAT_NEED_SW_VDEC := msm8937 msm8909
 TARGETS_THAT_SUPPORT_MAX_H264_LEVEL_42 := msm8937
 TARGETS_THAT_SUPPORT_MAX_H264_LEVEL_51 := msm8953 sdm660
 TARGETS_THAT_SUPPORT_MAX_H264_LEVEL_52 := msm8996 msm8998 apq8098_latv
@@ -66,6 +67,10 @@ ifeq ($(call is-board-platform-in-list, $(MASTER_SIDE_CP_TARGET_LIST)),true)
 libmm-vdec-def += -DMASTER_SIDE_CP
 endif
 
+ifeq ($(call is-platform-sdk-version-at-least,27),true) # O-MR1
+libmm-vdec-def += -D_ANDROID_O_MR1_DIVX_CHANGES
+endif
+
 ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_DOES_NOT_SUPPORT_HEVC_HDR_10)),true)
 libmm-vdec-def += -DHEVC_PROFILE_HDR10_NOT_SUPPORTED
 endif
@@ -84,6 +89,7 @@ libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/adreno
 libmm-vdec-inc          += $(TOP)/hardware/qcom/media/libc2dcolorconvert
 libmm-vdec-inc          += $(TOP)/hardware/qcom/media/hypv-intercept
 libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/mm-video/SwVdec
+libmm-vdec-inc          += $(TARGET_OUT_HEADERS)/mm-video/swvdec
 libmm-vdec-inc          += $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include
 
 ifeq ($(PLATFORM_SDK_VERSION), 18)  #JB_MR2
@@ -155,6 +161,42 @@ LOCAL_STATIC_LIBRARIES  := libOmxVidcCommon
 LOCAL_SRC_FILES         += src/omx_vdec_v4l2.cpp
 
 include $(BUILD_SHARED_LIBRARY)
+
+
+
+# ---------------------------------------------------------------------------------
+# 			Make the Shared library (libOmxSwVdec)
+# ---------------------------------------------------------------------------------
+
+include $(CLEAR_VARS)
+ifneq "$(wildcard $(QCPATH) )" ""
+ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_NEED_SW_VDEC)),true)
+
+LOCAL_MODULE                  := libOmxSwVdec
+LOCAL_MODULE_TAGS             := optional
+LOCAL_VENDOR_MODULE           := true
+LOCAL_CFLAGS                  := $(libmm-vdec-def)
+
+LOCAL_HEADER_LIBRARIES := \
+        media_plugin_headers \
+        libnativebase_headers \
+        libutils_headers \
+        libhardware_headers \
+        display_headers
+
+LOCAL_C_INCLUDES              += $(libmm-vdec-inc)
+LOCAL_ADDITIONAL_DEPENDENCIES := $(libmm-vdec-add-dep)
+
+LOCAL_PRELINK_MODULE          := false
+LOCAL_SHARED_LIBRARIES        := liblog libcutils libion
+LOCAL_SHARED_LIBRARIES        += libswvdec
+
+LOCAL_SRC_FILES               := src/omx_swvdec.cpp
+LOCAL_SRC_FILES               += src/omx_swvdec_utils.cpp
+
+include $(BUILD_SHARED_LIBRARY)
+endif
+endif
 
 # ---------------------------------------------------------------------------------
 #                END
