@@ -23,6 +23,7 @@ libmm-venc-def += -D_ANDROID_ICS_
 libmm-venc-def += -D_MSM8974_
 
 TARGETS_THAT_USE_FLAG_MSM8226 := msm8226 msm8916 msm8909
+TARGETS_THAT_NEED_SW_VENC_MPEG4 := msm8909 msm8937
 TARGETS_THAT_NEED_SW_VENC_HEVC := msm8992
 TARGETS_THAT_SUPPORT_UBWC := msm8996 msm8998 apq8098_latv
 TARGETS_THAT_SUPPORT_VQZIP := msm8996 msm8998 apq8098_latv
@@ -164,6 +165,46 @@ LOCAL_SRC_FILES   += src/omx_video_encoder.cpp
 LOCAL_SRC_FILES   += src/video_encoder_device_v4l2.cpp
 
 include $(BUILD_SHARED_LIBRARY)
+
+ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_NEED_SW_VENC_MPEG4)),true)
+# ---------------------------------------------------------------------------------
+# 			Make the Shared library (libOmxSwVencMpeg4)
+# ---------------------------------------------------------------------------------
+
+include $(CLEAR_VARS)
+
+libmm-venc-inc      += $(TARGET_OUT_HEADERS)/mm-video/swvenc
+
+LOCAL_MODULE                    := libOmxSwVencMpeg4
+
+LOCAL_MODULE_TAGS               := optional
+LOCAL_VENDOR_MODULE             := true
+LOCAL_CFLAGS                    := $(libmm-venc-def)
+
+LOCAL_HEADER_LIBRARIES := \
+        media_plugin_headers \
+        libnativebase_headers \
+        libutils_headers \
+        libhardware_headers \
+        display_headers
+
+LOCAL_C_INCLUDES                := $(libmm-venc-inc)
+LOCAL_ADDITIONAL_DEPENDENCIES   := $(libmm-venc-add-dep)
+
+LOCAL_PRELINK_MODULE      := false
+LOCAL_SHARED_LIBRARIES    := liblog libcutils libdl libion
+LOCAL_SHARED_LIBRARIES    += libMpeg4SwEncoder
+ifeq ($(BOARD_USES_ADRENO), true)
+LOCAL_SHARED_LIBRARIES    += libc2dcolorconvert
+endif # ($(BOARD_USES_ADRENO), true)
+LOCAL_STATIC_LIBRARIES    := libOmxVidcCommon
+
+LOCAL_SRC_FILES   := src/omx_video_base.cpp
+LOCAL_SRC_FILES   += src/omx_swvenc_mpeg4.cpp
+
+include $(BUILD_SHARED_LIBRARY)
+endif
+
 
 # ---------------------------------------------------------------------------------
 # 					END

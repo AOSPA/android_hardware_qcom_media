@@ -157,7 +157,89 @@ omx_core_cb_type core[] =
       "video_encoder.avc"
     }
   },
+   {
+    "OMX.qti.video.decoder.mpeg4sw",
+    NULL, // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxSwVdec.so",
+    {
+      "video_decoder.mpeg4"
+    }
+  },
   {
+    "OMX.qti.video.decoder.h263sw",
+    NULL, // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxSwVdec.so",
+    {
+      "video_decoder.h263"
+    }
+  },
+  {
+    "OMX.qti.video.decoder.divxsw",
+    NULL,   // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxSwVdec.so",
+    {
+      "video_decoder.divx"
+    }
+  },
+  {
+    "OMX.qti.video.decoder.divx4sw",
+    NULL,   // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxSwVdec.so",
+    {
+#ifdef _ANDROID_O_MR1_DIVX_CHANGES
+      "video_decoder.divx4"
+#else
+      "video_decoder.divx"
+#endif
+    }
+  },
+  {
+    "OMX.qcom.video.encoder.mpeg4sw",
+    NULL, // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxSwVencMpeg4.so",
+    {
+      "video_encoder.mpeg4"
+    }
+  },
+  {
+    "OMX.qcom.video.encoder.h263sw",
+    NULL, // Create instance function
+    // Unique instance handle
+    {
+      NULL
+    },
+    NULL,   // Shared object library handle
+    "libOmxSwVencMpeg4.so",
+    {
+      "video_encoder.h263"
+    }
+  },
+    {
     "OMX.qcom.audio.encoder.g711mlaw",
     NULL,   // Create instance function
     // Unique instance handle
