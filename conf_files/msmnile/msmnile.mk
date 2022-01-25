@@ -27,8 +27,8 @@ ifeq ($(GENERIC_ODM_IMAGE),true)
     PRODUCT_ODM_PROPERTIES += debug.stagefright.ccodec=4
     PRODUCT_ODM_PROPERTIES += debug.stagefright.omx_default_rank=1000
     PRODUCT_COPY_FILES += \
-      device/qcom/common/media/media_profiles.xml:$(TARGET_COPY_OUT_ODM)/etc/media_profiles_V1_0.xml \
-      device/qcom/common/media/media_profiles.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_vendor.xml
+      device/qcom/common/vendor/media/media_profiles.xml:$(TARGET_COPY_OUT_ODM)/etc/media_profiles_V1_0.xml \
+      device/qcom/common/vendor/media/media_profiles.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_vendor.xml
 
 else ifneq ($(TARGET_FWK_SUPPORTS_AV_VALUEADDS),false)
     $(warning "Enabling codec2.0 non-audio SW only for non-generic odm build variant")
@@ -37,13 +37,13 @@ else ifneq ($(TARGET_FWK_SUPPORTS_AV_VALUEADDS),false)
     endif
     PRODUCT_PROPERTY_OVERRIDES += debug.stagefright.omx_default_rank=0
     PRODUCT_COPY_FILES += \
-      device/qcom/common/media/media_profiles.xml:$(TARGET_COPY_OUT_ODM)/etc/media_profiles_V1_0.xml \
+      device/qcom/common/vendor/media/media_profiles.xml:$(TARGET_COPY_OUT_ODM)/etc/media_profiles_V1_0.xml \
       $(CONFIG_PATH)/media_profiles.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_vendor.xml
 
 else
     $(warning "Compiling without value-added features")
     DEVICE_MANIFEST_FILE += hardware/qcom/media/conf_files/msmnile/c2_manifest.xml
     PRODUCT_COPY_FILES += \
-      device/qcom/common/media/media_profiles.xml:$(TARGET_COPY_OUT_ODM)/etc/media_profiles_V1_0.xml \
-      device/qcom/common/media/media_profiles.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_vendor.xml
+      device/qcom/common/vendor/media/media_profiles.xml:$(TARGET_COPY_OUT_ODM)/etc/media_profiles_V1_0.xml \
+      device/qcom/common/vendor/media/media_profiles.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_profiles_vendor.xml
 endif
