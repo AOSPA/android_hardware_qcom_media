@@ -16,7 +16,7 @@ PRODUCT_PACKAGES += $(MM_CORE)
 ifeq ($(call is-board-platform-in-list, crow blair pitti bengal neo parrot taro lahaina holi \
         kona trinket qcs605), true)
     $(warning "Default Codec2.0 Enabled")
-    PRODUCT_PROPERTY_OVERRIDES += debug.stagefright.ccodec=4
+    PRODUCT_VENDOR_PROPERTIES += debug.stagefright.ccodec=4
 endif
 
 endif
