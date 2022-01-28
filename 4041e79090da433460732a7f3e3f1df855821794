@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "c0b20e58_20c15d26",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1000597
+      },
+      "writtenOn": "2022-01-28T12:53:26Z",
+      "side": 1,
+      "message": "Need this if we use common media component.",
+      "revId": "4041e79090da433460732a7f3e3f1df855821794",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
