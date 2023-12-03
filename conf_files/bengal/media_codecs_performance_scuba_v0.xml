@@ -117,15 +117,15 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
             <Limit name="measured-frame-rate-1920x1080" range="10-15" />
         </MediaCodec>
         <MediaCodec name="c2.android.av1.encoder" type="video/av01" update="true">
-            <Limit name="measured-frame-rate-320x240" range="40-90" />
+            <Limit name="measured-frame-rate-320x240" range="600-650" />
             <Limit name="measured-frame-rate-640x360" range="75-200" />
-            <Limit name="measured-frame-rate-720x480" range="1-50" />
-            <Limit name="measured-frame-rate-1280x720" range="1-50" />
+            <Limit name="measured-frame-rate-720x480" range="49-110" />
+            <Limit name="measured-frame-rate-1280x720" range="19-41" />
         </MediaCodec>
         <MediaCodec name="c2.android.vp9.encoder" type="video/x-vnd.on2.vp9" update="true">
-           <Limit name="measured-frame-rate-320x180" range="50-100" />
-           <Limit name="measured-frame-rate-640x360" range="10-50" />
-           <Limit name="measured-frame-rate-1280x720" range="1-50" />
+           <Limit name="measured-frame-rate-320x180" range="600-700" />
+           <Limit name="measured-frame-rate-640x360" range="100-200" />
+           <Limit name="measured-frame-rate-1280x720" range="20-50" />
         </MediaCodec>
     </Encoders>
     <Decoders>
@@ -223,8 +223,8 @@ IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
         </MediaCodec>
         <MediaCodec name="c2.android.av1.decoder" type="video/av01" update="true">
             <Limit name="measured-frame-rate-352x288" range="186-426" />
-            <Limit name="measured-frame-rate-640x360" range="50-100" />
-            <Limit name="measured-frame-rate-720x480" range="30-80" />
+            <Limit name="measured-frame-rate-640x360" range="150-300" />
+            <Limit name="measured-frame-rate-720x480" range="102-228" />
             <Limit name="measured-frame-rate-1280x720" range="52-116" />
        </MediaCodec>
     </Decoders>
