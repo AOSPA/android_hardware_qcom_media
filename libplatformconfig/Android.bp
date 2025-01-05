@@ -1,0 +1,33 @@
+cc_library_shared {
+    name: "libplatformconfig",
+    vendor: true,
+
+    srcs: [
+        "ConfigParser.cpp",
+        "ConfigStore.cpp",
+        "PlatformConfig.cpp",
+    ],
+
+    cflags: [
+        "-Werror",
+        "-DENABLE_CONFIGSTORE",
+    ],
+
+    include_dirs: [
+        "external/expat/lib",
+    ],
+
+    shared_libs: [
+        "libexpat",
+        "libhidlbase",
+        "liblog",
+        "libutils",
+        "vendor.qti.hardware.capabilityconfigstore@1.0",
+    ],
+}
+
+cc_library_headers {
+    name: "libplatformconfig_headers",
+    export_include_dirs: ["."],
+    vendor: true,
+}
