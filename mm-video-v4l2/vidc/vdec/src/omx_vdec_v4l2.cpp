@@ -82,10 +82,6 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <qdMetaData.h>
 #include <gralloc_priv.h>
 
-#ifdef ANDROID_JELLYBEAN_MR2
-#include "QComOMXMetadata.h"
-#endif
-
 #define BUFFER_LOG_LOC "/data/vendor/media"
 
 #ifdef OUTPUT_EXTRADATA_LOG
