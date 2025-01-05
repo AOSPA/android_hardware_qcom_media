@@ -6,7 +6,6 @@ include $(QCOM_MEDIA_ROOT)/mm-core/Android.mk
 endif
 
 ifeq ($(call is-board-platform-in-list, $(MSM_VIDC_TARGET_LIST)),true)
-include $(QCOM_MEDIA_ROOT)/mm-video-v4l2/Android.mk
 include $(QCOM_MEDIA_ROOT)/libarbitrarybytes/Android.mk
 ifeq ($(ENABLE_HYP),true)
 include $(QCOM_MEDIA_ROOT)/hypv-intercept/Android.mk
