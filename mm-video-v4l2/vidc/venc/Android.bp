@@ -1,0 +1,79 @@
+cc_library_shared {
+    name: "libOmxVenc",
+    vendor: true,
+    defaults: [
+        "libmm_venc_def-defaults",
+    ],
+    srcs: [
+        "src/omx_video_base.cpp",
+        "src/omx_video_encoder.cpp",
+        "src/video_encoder_device_v4l2.cpp",
+    ],
+
+    cflags: [
+        "-Werror",
+        "-D_ANDROID_",
+        "-D_ANDROID_ICS_",
+        "-D_UBWC_",
+        "-DUSE_CAMERA_METABUFFER_UTILS",
+        "-DUSE_ION",
+        "-DUSE_NATIVE_HANDLE_SOURCE",
+    ],
+
+    include_dirs: [
+        "system/memory/libion/include",
+        "system/memory/libion/kernel-headers",
+    ],
+
+    header_libs: [
+        "display_headers",
+        "libc2dcolorconvert_headers",
+        "libomxcommon_headers",
+        "libomxcore_headers",
+        "libomxvenc_headers",
+        "libplatformconfig_headers",
+        "libstagefrighthw_headers",
+        "media_plugin_headers",
+        "qti_kernel_headers",
+    ],
+
+    shared_libs: [
+        "libc2dcolorconvert",
+        "libcutils",
+        "libion",
+        "liblog",
+        "libplatformconfig",
+        "libqdMetaData",
+    ],
+
+    static_libs: [
+        "libOmxVidcCommon",
+    ],
+}
+
+cc_library_headers {
+    name: "libomxvenc_headers",
+    export_include_dirs: ["inc"],
+    vendor: true,
+}
+
+soong_config_module_type {
+    name: "libmm_venc_def_cc_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "libmm_venc_def",
+    bool_variables: [
+        "uses_vqzip", // TARGETS_THAT_SUPPORT_VQZIP
+    ],
+    properties: [
+        "cflags",
+    ],
+}
+
+libmm_venc_def_cc_defaults {
+    name: "libmm_venc_def-defaults",
+    soong_config_variables: {
+        uses_vqzip: {
+            cflags: ["-D_VQZIP_"],
+        },
+    },
+}

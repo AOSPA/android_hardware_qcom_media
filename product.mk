@@ -27,3 +27,7 @@ include hardware/qcom/media/conf_files/msmnile/msmnile.mk
 endif
 
 endif
+
+ifeq ($(call is-board-platform-in-list, $(TARGETS_THAT_SUPPORT_VQZIP)),true)
+$(call soong_config_set,libmm_venc_def,uses_vqzip,true)
+endif
