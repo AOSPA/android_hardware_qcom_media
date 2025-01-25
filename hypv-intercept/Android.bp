@@ -1,0 +1,26 @@
+cc_library_shared {
+    name: "libhypv_intercept",
+    vendor: true,
+    defaults: ["qtidisplay_defaults"],
+    srcs: [
+        "hypv_intercept.cpp",
+    ],
+
+    header_libs: [
+        "libomxcommon_headers",
+    ],
+
+    include_dirs: [
+        "system/core/include",
+    ],
+
+    shared_libs: [
+        "liblog",
+        "libcutils",
+        "libdl",
+    ],
+
+    cflags: [
+        "-D_ANDROID_",
+    ],
+}
