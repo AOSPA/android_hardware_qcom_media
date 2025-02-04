@@ -61,47 +61,4 @@ endif
 
 include $(BUILD_SHARED_LIBRARY)
 
-#===============================================================================
-#             LIBRARY for command line test apps
-#===============================================================================
-
-include $(CLEAR_VARS)
-
-LOCAL_C_INCLUDES        := $(LOCAL_PATH)/src/common
-LOCAL_C_INCLUDES        += $(TOP)/hardware/qcom/media/libplatformconfig
-
-LOCAL_HEADER_LIBRARIES := \
-        libutils_headers \
-        libomxcore_headers
-
-LOCAL_EXPORT_HEADER_LIBRARY_HEADERS := libomxcore_headers
-
-LOCAL_PRELINK_MODULE    := false
-LOCAL_MODULE            := libmm-omxcore
-LOCAL_MODULE_TAGS       := optional
-LOCAL_VENDOR_MODULE     := true
-LOCAL_SHARED_LIBRARIES  := liblog libdl libcutils
-ifeq ($(call is-board-platform-in-list, $(MSM_VIDC_TARGET_LIST)),true)
-LOCAL_SHARED_LIBRARIES  += libplatformconfig
-endif
-LOCAL_CFLAGS            := $(OMXCORE_CFLAGS)
-
-LOCAL_SRC_FILES         := src/common/omx_core_cmp.cpp
-LOCAL_SRC_FILES         += src/common/qc_omx_core.c
-ifneq (,$(filter msmnile sdmshrike $(MSMSTEPPE) $(TRINKET) atoll,$(TARGET_BOARD_PLATFORM)))
-LOCAL_SRC_FILES         += src/$(MM_CORE_TARGET)/registry_table.c
-else
-LOCAL_SRC_FILES         += src/$(MM_CORE_TARGET)/qc_registry_table.c
-endif
-
-include $(BUILD_SHARED_LIBRARY)
-
-include $(CLEAR_VARS)
-
-LOCAL_MODULE := libomxcore_headers
-LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/inc
-LOCAL_VENDOR_MODULE := true
-
-include $(BUILD_HEADER_LIBRARY)
-
 endif #BUILD_TINY_ANDROID
