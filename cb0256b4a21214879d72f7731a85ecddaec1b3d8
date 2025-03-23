@@ -16,6 +16,24 @@
       "message": "won\u0027t you still need this for hw omx stack?",
       "revId": "cb0256b4a21214879d72f7731a85ecddaec1b3d8",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "2356fe44_a2f110a9",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1001094
+      },
+      "writtenOn": "2025-03-23T00:13:53Z",
+      "side": 1,
+      "message": "Yes, actually I didn\u0027t pay attention to that, but we only need to remove SW OMX packages. Let\u0027s also follow what Lineage did for it. A commit removing both SW codecs was already made by Mike Bestas, I will upload it later",
+      "parentUuid": "3e208745_5ff5ab85",
+      "revId": "cb0256b4a21214879d72f7731a85ecddaec1b3d8",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
