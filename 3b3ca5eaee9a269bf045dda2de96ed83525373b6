@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": true,
+      "key": {
+        "uuid": "94871d1c_9ca2e08a",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1001094
+      },
+      "writtenOn": "2025-05-21T22:09:45Z",
+      "side": 1,
+      "message": "fastcv_headers already defined by device/qcom/common/vendor/media-legacy, what did you do in addition to make it work? Because it won\u0027t work only with your changes",
+      "revId": "3b3ca5eaee9a269bf045dda2de96ed83525373b6",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    }
+  ]
+}
