@@ -16,6 +16,23 @@
       "message": "fastcv_headers already defined by device/qcom/common/vendor/media-legacy, what did you do in addition to make it work? Because it won\u0027t work only with your changes",
       "revId": "3b3ca5eaee9a269bf045dda2de96ed83525373b6",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "48fc93d6_6bb784d5",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1001094
+      },
+      "writtenOn": "2025-05-24T17:03:38Z",
+      "side": 1,
+      "message": "Is that what you did https://github.com/peternmuller/android_device_qcom_common/commit/9955c539b0fb64309369ec9ba06a353210a25636 ?\nIn that case no problem with the change, but that\u0027d need to be pushed as well, and all devices using media-legacy component should follow",
+      "revId": "3b3ca5eaee9a269bf045dda2de96ed83525373b6",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
