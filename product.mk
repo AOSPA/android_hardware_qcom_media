@@ -17,6 +17,7 @@ MM_VIDEO += libc2dcolorconvert
 MM_VIDEO += libOmxVdec
 MM_VIDEO += libOmxVenc
 MM_VIDEO += libstagefrighthw
+MM_VIDEO += init.qti.media.rc
 MM_VIDEO += init.qti.media.sh
 
 PRODUCT_PACKAGES += $(MM_VIDEO)
