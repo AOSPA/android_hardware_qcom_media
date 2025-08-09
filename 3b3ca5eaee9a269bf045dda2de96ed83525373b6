@@ -33,6 +33,24 @@
       "message": "Is that what you did https://github.com/peternmuller/android_device_qcom_common/commit/9955c539b0fb64309369ec9ba06a353210a25636 ?\nIn that case no problem with the change, but that\u0027d need to be pushed as well, and all devices using media-legacy component should follow",
       "revId": "3b3ca5eaee9a269bf045dda2de96ed83525373b6",
       "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
+    },
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "83ad758c_6c3d4615",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 1001094
+      },
+      "writtenOn": "2025-08-09T13:19:01Z",
+      "side": 1,
+      "message": "Done",
+      "parentUuid": "94871d1c_9ca2e08a",
+      "revId": "3b3ca5eaee9a269bf045dda2de96ed83525373b6",
+      "serverId": "3162e3d8-d894-470e-abd9-724f7b0effad"
     }
   ]
 }
